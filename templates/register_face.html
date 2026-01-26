@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng ký khuôn mặt - Hệ thống điểm danh</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <div>
+                <button class="btn btn-secondary" onclick="window.location.href='/dashboard'"
+                    style="width: auto; padding: 8px 20px;">
+                    ← Quay lại
+                </button>
+            </div>
+            <h1>📸 Đăng ký khuôn mặt</h1>
+            <div class="user-info">
+                <span id="username">User</span>
+                <button class="btn btn-danger" onclick="logout()">Đăng xuất</button>
+            </div>
+        </div>
+
+        <div class="single-mode-content">
+            <div class="section-large">
+                <div class="video-container-large">
+                    <video id="cameraPreview" autoplay playsinline></video>
+                </div>
+
+                <div class="input-group">
+                    <input type="text" id="personName" class="form-control" placeholder="Nhập tên người...">
+                </div>
+
+                <div class="input-group" id="cameraClassGroup">
+                    <input type="text" id="className" class="form-control" placeholder="Nhập tên lớp (ví dụ: Lớp 10A1)...">
+                </div>
+                <div id="classInfo" style="margin-bottom: 10px; color: #475569; font-weight: 600;"></div>
+
+                <div class="controls">
+                    <button class="btn btn-primary" id="cameraBtn" onclick="toggleCamera()">BẬT CAMERA</button>
+                    <button class="btn btn-success" onclick="captureAndRegister()">CHỤP & ĐĂNG KÝ</button>
+                </div>
+
+                <div style="margin: 20px 0; text-align: center; color: #64748b;">
+                    <strong>HOẶC</strong>
+                </div>
+
+                <div class="input-group">
+                    <input type="text" id="uploadPersonName" class="form-control" placeholder="Nhập tên người...">
+                </div>
+
+                <div class="input-group" id="uploadClassGroup">
+                    <input type="text" id="uploadClassName" class="form-control" placeholder="Nhập tên lớp (ví dụ: Lớp 10A1)...">
+                </div>
+
+                <div class="controls">
+                    <input type="file" id="imageUpload" accept="image/*" style="display: none;"
+                        onchange="previewImage()">
+                    <button class="btn btn-secondary" onclick="document.getElementById('imageUpload').click()">CHỌN
+                        ẢNH</button>
+                    <button class="btn btn-success" onclick="uploadAndRegister()">UPLOAD & ĐĂNG KÝ</button>
+                </div>
+
+                <div id="registerStatus" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/register.js"></script>
+</body>
+
+</html>

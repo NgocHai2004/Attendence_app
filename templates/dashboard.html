@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Hệ thống điểm danh</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        .class-selection {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .class-selection h2 {
+            color: var(--dark);
+            margin-bottom: 15px;
+            font-size: 1.5rem;
+        }
+
+        .class-select-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .class-select-group select {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 1rem;
+            background: white;
+            color: var(--dark);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .class-select-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .attendance-section {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .attendance-section h2 {
+            color: var(--dark);
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+
+        .attendance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .attendance-table th,
+        .attendance-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .attendance-table th {
+            background: var(--light);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        .attendance-table tr:hover {
+            background: #f8fafc;
+        }
+
+        .attendance-empty {
+            text-align: center;
+            padding: 40px;
+            color: var(--gray);
+            font-size: 1.1rem;
+        }
+
+        .refresh-btn {
+            margin-left: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <h1>🎯 Hệ thống nhận diện khuôn mặt</h1>
+            <div class="user-info">
+                <span id="username">User</span>
+                <button class="btn btn-danger" onclick="logout()">Đăng xuất</button>
+            </div>
+        </div>
+
+        <div class="class-selection">
+            <h2>📚 Chọn lớp học</h2>
+            <div class="class-select-group">
+                <select id="classSelect">
+                    <option value="">-- Chọn lớp --</option>
+                </select>
+                <button class="btn btn-primary refresh-btn" onclick="loadClasses()">🔄 Làm mới</button>
+                <button class="btn btn-secondary" onclick="showAttendance()">Xem chi tiết</button>
+            </div>
+        </div>
+
+        <div class="attendance-section" id="attendanceSection" style="display: none;">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                <h2>📋 Điểm danh theo lớp</h2>
+                <div>
+                    <button class="btn btn-secondary" onclick="exportSelectedSessions()">Xuất CSV</button>
+                    <button class="btn btn-danger" onclick="deleteSelectedSessions()">Xóa</button>
+                </div>
+            </div>
+            <div style="margin: 15px 0; display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="btn btn-secondary" onclick="showHistory()">Lịch sử điểm danh</button>
+                <button class="btn btn-secondary" onclick="showStudents()">Danh sách sinh viên</button>
+            </div>
+            <div id="attendanceContent">
+                <div class="attendance-empty">Vui lòng chọn lớp để xem điểm danh</div>
+            </div>
+            <div style="margin-top: 20px;">
+                <div style="font-weight: 700; margin-bottom: 10px;">Danh sách sinh viên</div>
+                <div id="studentsContent"></div>
+            </div>
+        </div>
+
+        <div class="mode-selection">
+            <div class="mode-card" onclick="handleRegisterClick()">
+                <div class="mode-icon">📸</div>
+                <h2>Đăng ký khuôn mặt</h2>
+                <p>Đăng ký khuôn mặt mới vào hệ thống</p>
+            </div>
+
+            <div class="mode-card" onclick="handleRecognitionClick()">
+                <div class="mode-icon">📹</div>
+                <h2>Nhận diện RTSP Stream</h2>
+                <p>Nhận diện khuôn mặt từ camera RTSP</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function handleRecognitionClick() {
+            const classSelect = document.getElementById('classSelect');
+            const selectedClass = classSelect.value;
+            if (selectedClass) {
+                window.location.href = `/recognition?class_name=${encodeURIComponent(selectedClass)}`;
+            } else {
+                alert('Vui lòng chọn lớp học trước khi vào chế độ nhận diện!');
+                classSelect.focus();
+            }
+        }
+        function handleRegisterClick() {
+            const classSelect = document.getElementById('classSelect');
+            const selectedClass = classSelect.value;
+            if (selectedClass) {
+                window.location.href = `/register-face?class_name=${encodeURIComponent(selectedClass)}`;
+            } else {
+                window.location.href = '/register-face';
+            }
+        }
+        function logout() {
+            fetch('/api/logout')
+                .then(() => {
+                    window.location.href = '/login';
+                })
+                .catch(error => {
+                    console.error('Logout error:', error);
+                    window.location.href = '/login';
+                });
+        }
+
+        function loadClasses() {
+            fetch('/api/classes')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const select = document.getElementById('classSelect');
+                        const currentValue = select.value;
+
+                        // Clear existing options except the first one
+                        select.innerHTML = '<option value="">-- Chọn lớp --</option>';
+
+                        // Add classes
+                        data.classes.forEach(className => {
+                            const option = document.createElement('option');
+                            option.value = className;
+                            option.textContent = className;
+                            select.appendChild(option);
+                        });
+
+                        // Restore previous selection if it still exists
+                        if (currentValue && data.classes.includes(currentValue)) {
+                            select.value = currentValue;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading classes:', error);
+                });
+        }
+
+        function showAttendance() {
+            const classSelect = document.getElementById('classSelect');
+            const selectedClass = classSelect.value;
+            const attendanceSection = document.getElementById('attendanceSection');
+            const attendanceContent = document.getElementById('attendanceContent');
+            const studentsContent = document.getElementById('studentsContent');
+
+            if (!selectedClass) {
+                alert('Vui lòng chọn lớp');
+                classSelect.focus();
+                return;
+            }
+
+            attendanceSection.style.display = 'block';
+            attendanceContent.innerHTML = '<div class="attendance-empty">Đang tải...</div>';
+            studentsContent.innerHTML = '<div class="attendance-empty">Đang tải...</div>';
+            loadAttendance();
+            loadStudents();
+        }
+
+        function loadAttendance() {
+            const classSelect = document.getElementById('classSelect');
+            const selectedClass = classSelect.value;
+            const attendanceSection = document.getElementById('attendanceSection');
+            const attendanceContent = document.getElementById('attendanceContent');
+
+            if (!selectedClass) {
+                attendanceSection.style.display = 'none';
+                return;
+            }
+
+            fetch(`/api/attendance-sessions?class_name=${encodeURIComponent(selectedClass)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.sessions.length === 0) {
+                            attendanceContent.innerHTML = '<div class="attendance-empty">Chưa có lịch sử điểm danh cho lớp này</div>';
+                        } else {
+                            let html = '<table class="attendance-table">';
+                            html += '<thead><tr><th><input type="checkbox" id="selectAllSessions" onchange="toggleSelectAllSessions(this)"></th><th>STT</th><th>Chế độ</th><th>Bắt đầu</th><th>Kết thúc</th><th>Có mặt</th><th>Vắng</th><th></th></tr></thead>';
+                            html += '<tbody>';
+
+                            data.sessions.forEach((record, index) => {
+                                const start = new Date(record.start_time);
+                                const end = new Date(record.end_time);
+                                const startStr = isNaN(start.getTime()) ? '' : `${start.toLocaleDateString('vi-VN')} ${start.toLocaleTimeString('vi-VN')}`;
+                                const endStr = isNaN(end.getTime()) ? '' : `${end.toLocaleDateString('vi-VN')} ${end.toLocaleTimeString('vi-VN')}`;
+                                const modeText = record.attendance_type === 'out' ? 'RA' : 'VÀO';
+
+                                html += `<tr>
+                                    <td><input type="checkbox" class="session-checkbox" value="${record.id}"></td>
+                                    <td>${index + 1}</td>
+                                    <td><strong>${modeText}</strong></td>
+                                    <td>${startStr}</td>
+                                    <td>${endStr}</td>
+                                    <td>${record.present}/${record.total}</td>
+                                    <td>${record.absent}/${record.total}</td>
+                                    <td><button class="btn btn-secondary" onclick="viewSessionDetail('${record.id}')">Chi tiết</button></td>
+                                </tr>`;
+                            });
+
+                            html += '</tbody></table>';
+                            attendanceContent.innerHTML = html;
+                        }
+                    } else {
+                        attendanceContent.innerHTML = '<div class="attendance-empty">Lỗi khi tải điểm danh</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading attendance:', error);
+                    attendanceContent.innerHTML = '<div class="attendance-empty">Lỗi khi tải điểm danh</div>';
+                });
+        }
+
+        function showHistory() {
+            const attendanceContent = document.getElementById('attendanceContent');
+            const studentsContent = document.getElementById('studentsContent');
+            attendanceContent.style.display = 'block';
+            studentsContent.style.display = 'none';
+        }
+
+        function showStudents() {
+            const attendanceContent = document.getElementById('attendanceContent');
+            const studentsContent = document.getElementById('studentsContent');
+            attendanceContent.style.display = 'none';
+            studentsContent.style.display = 'block';
+        }
+
+        function loadStudents() {
+            const classSelect = document.getElementById('classSelect');
+            const selectedClass = classSelect.value;
+            const container = document.getElementById('studentsContent');
+
+            if (!selectedClass) {
+                container.innerHTML = '';
+                return;
+            }
+
+            fetch(`/api/class-students?class_name=${encodeURIComponent(selectedClass)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) {
+                        container.innerHTML = '<div class="attendance-empty">Không tải được danh sách sinh viên</div>';
+                        return;
+                    }
+
+                    if (data.students.length === 0) {
+                        container.innerHTML = '<div class="attendance-empty">Chưa có sinh viên</div>';
+                        return;
+                    }
+
+                    let html = '<table class="attendance-table">';
+                    html += '<thead><tr><th>STT</th><th>Tên</th><th></th></tr></thead>';
+                    html += '<tbody>';
+                    data.students.forEach((student, index) => {
+                        html += `<tr>
+                            <td>${index + 1}</td>
+                            <td>${student.name}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="deleteStudent('${student.id}')">Xóa</button>
+                            </td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table>';
+                    container.innerHTML = html;
+                })
+                .catch(() => {
+                    container.innerHTML = '<div class="attendance-empty">Không tải được danh sách sinh viên</div>';
+                });
+        }
+
+        function deleteStudent(studentId) {
+            if (!confirm('Xóa sinh viên này?')) {
+                return;
+            }
+
+            fetch(`/api/class-students/${encodeURIComponent(studentId)}`, {
+                method: 'DELETE'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadStudents();
+                    } else {
+                        alert('Xóa thất bại');
+                    }
+                })
+                .catch(() => {
+                    alert('Xóa thất bại');
+                });
+        }
+
+        function getSelectedSessionIds() {
+            return Array.from(document.querySelectorAll('.session-checkbox:checked')).map(cb => cb.value);
+        }
+
+        function toggleSelectAllSessions(source) {
+            document.querySelectorAll('.session-checkbox').forEach(cb => {
+                cb.checked = source.checked;
+            });
+        }
+
+        function exportSelectedSessions() {
+            const sessionIds = getSelectedSessionIds();
+            if (sessionIds.length === 0) {
+                alert('Vui lòng chọn lịch sử cần xuất');
+                return;
+            }
+
+            fetch('/api/attendance-sessions/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_ids: sessionIds })
+            })
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'attendance_sessions.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(() => {
+                    alert('Xuất file thất bại');
+                });
+        }
+
+        function deleteSelectedSessions() {
+            const sessionIds = getSelectedSessionIds();
+            if (sessionIds.length === 0) {
+                alert('Vui lòng chọn lịch sử cần xóa');
+                return;
+            }
+
+            if (!confirm('Xóa các lịch sử đã chọn?')) {
+                return;
+            }
+
+            fetch('/api/attendance-sessions', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_ids: sessionIds })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadAttendance();
+                    } else {
+                        alert('Xóa thất bại');
+                    }
+                })
+                .catch(() => {
+                    alert('Xóa thất bại');
+                });
+        }
+
+        function viewSessionDetail(sessionId) {
+            window.location.href = `/attendance-session/${encodeURIComponent(sessionId)}`;
+        }
+
+        // Load classes on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadClasses();
+            const classSelect = document.getElementById('classSelect');
+            const attendanceSection = document.getElementById('attendanceSection');
+            classSelect.addEventListener('change', () => {
+                attendanceSection.style.display = 'none';
+            });
+            showHistory();
+        });
+    </script>
+</body>
+
+</html>

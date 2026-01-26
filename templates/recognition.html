@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nhận diện RTSP - Hệ thống điểm danh</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <div>
+                <button class="btn btn-secondary" onclick="window.location.href='/dashboard'"
+                    style="width: auto; padding: 8px 20px;">
+                    ← Quay lại
+                </button>
+            </div>
+            <h1>📹 Nhận diện RTSP Stream</h1>
+            <div class="user-info">
+                <span id="username">User</span>
+                <button class="btn btn-danger" onclick="logout()">Đăng xuất</button>
+            </div>
+        </div>
+
+        <div class="recognition-content">
+            <div class="section-video">
+                <div class="video-container-large">
+                    <img id="rtspStream" src="" alt="RTSP Stream"
+                        style="width: 100%; height: auto; min-height: 400px; background: #1a1a1a;">
+                </div>
+
+                <div class="input-group">
+                    <input type="text" id="rtspUrl" class="form-control"
+                        placeholder="Nhập RTSP URL hoặc 0 (để dùng camera máy tính)">
+                </div>
+
+                <div class="input-group">
+                    <div class="attendance-mode-selector">
+                        <label class="mode-label">Chế độ điểm danh:</label>
+                        <div class="mode-options">
+                            <input type="radio" id="modeIn" name="attendanceMode" value="in" checked>
+                            <label for="modeIn" class="mode-btn btn-in">VÀO</label>
+
+                            <input type="radio" id="modeOut" name="attendanceMode" value="out">
+                            <label for="modeOut" class="mode-btn btn-out">RA</label>
+                        </div>
+                    </div>
+                </div>
+
+                <style>
+                    .attendance-mode-selector {
+                        display: flex;
+                        align-items: center;
+                        gap: 20px;
+                        margin-bottom: 20px;
+                        background: #f8fafc;
+                        padding: 10px 20px;
+                        border-radius: 12px;
+                        border: 1px solid #e2e8f0;
+                        width: 100%;
+                    }
+
+                    .mode-label {
+                        font-weight: 600;
+                        color: #475569;
+                    }
+
+                    .mode-options {
+                        display: flex;
+                        gap: 10px;
+                        flex: 1;
+                    }
+
+                    .mode-options input[type="radio"] {
+                        display: none;
+                    }
+
+                    .mode-btn {
+                        flex: 1;
+                        padding: 10px;
+                        text-align: center;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-weight: 700;
+                        transition: all 0.2s;
+                        border: 2px solid transparent;
+                        background: #e2e8f0;
+                        color: #64748b;
+                    }
+
+                    #modeIn:checked+.mode-btn {
+                        background: #ecfdf5;
+                        color: #10b981;
+                        border-color: #10b981;
+                    }
+
+                    #modeOut:checked+.mode-btn {
+                        background: #fef2f2;
+                        color: #ef4444;
+                        border-color: #ef4444;
+                    }
+
+                    .attendance-summary {
+                        display: flex;
+                        gap: 12px;
+                        flex-wrap: wrap;
+                        margin: 10px 0 15px;
+                    }
+
+                    .summary-card {
+                        background: #f8fafc;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 10px;
+                        padding: 10px 14px;
+                        min-width: 150px;
+                        color: var(--dark);
+                        font-weight: 600;
+                    }
+                </style>
+
+                <div class="attendance-summary" id="attendanceSummary"></div>
+
+                <div class="controls">
+                    <button class="btn btn-primary" id="startBtn" onclick="startRTSP()">BẮT ĐẦU</button>
+                    <button class="btn btn-danger" id="stopBtn" onclick="stopRTSP()" disabled>DỪNG</button>
+                </div>
+
+                <div id="rtspStatus" style="margin-top: 15px;"></div>
+            </div>
+
+            <div class="section-faces">
+                <h2>👥 Khuôn mặt được nhận diện</h2>
+                <div id="recognizedFaces" class="face-list">
+                    <p style="text-align: center; color: #64748b; padding: 20px;">
+                        Chưa có khuôn mặt nào được nhận diện
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/recognition.js"></script>
+</body>
+
+</html>

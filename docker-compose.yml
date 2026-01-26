@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  mongo:
+    image: mongo:6
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    security_opt:
+      - "seccomp=unconfined"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/
+      - DATABASE_NAME=attendance_app
+      - SECRET_KEY=your-secret-key-change-this-in-production
+      - FLASK_ENV=development
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      - mongo
+volumes:
+  mongo_data:
