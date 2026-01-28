@@ -103,7 +103,7 @@
 <body>
     <div class="dashboard-container">
         <div class="dashboard-header">
-            <h1>🎯 Hệ thống nhận diện khuôn mặt</h1>
+            <h1>Hệ thống nhận diện khuôn mặt</h1>
             <div class="user-info">
                 <span id="username">User</span>
                 <button class="btn btn-danger" onclick="logout()">Đăng xuất</button>
@@ -111,38 +111,38 @@
         </div>
 
         <div class="class-selection">
-            <h2>📚 Chọn lớp học</h2>
+            <h2>Chọn lớp học</h2>
             <div class="class-select-group">
                 <select id="classSelect">
                     <option value="">-- Chọn lớp --</option>
                 </select>
-                <button class="btn btn-primary refresh-btn" onclick="loadClasses()">🔄 Làm mới</button>
+                <button class="btn btn-primary refresh-btn" onclick="window.location.href='/'">🏠 Trang chủ</button>
                 <button class="btn btn-secondary" onclick="showAttendance()">Xem chi tiết</button>
             </div>
         </div>
 
         <div class="attendance-section" id="attendanceSection" style="display: none;">
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-                <h2>📋 Điểm danh theo lớp</h2>
-                <div>
+                <h2 id="sectionTitle">Danh sáchớp</h2>
+                <div id="classActions" style="display: none;">
                     <button class="btn btn-secondary" onclick="exportSelectedSessions()">Xuất CSV</button>
                     <button class="btn btn-danger" onclick="deleteSelectedSessions()">Xóa</button>
                 </div>
             </div>
-            <div style="margin: 15px 0; display: flex; gap: 10px; flex-wrap: wrap;">
-                <button class="btn btn-secondary" onclick="showHistory()">Lịch sử điểm danh</button>
-                <button class="btn btn-secondary" onclick="showStudents()">Danh sách sinh viên</button>
+            <div id="classButtons" style="margin: 15px 0; display: none; gap: 10px; flex-wrap: wrap;">
+                <button class="btn btn-secondary" id="btnHistory" onclick="showHistory()">Lịch sử điểm danh</button>
+                <button class="btn btn-secondary" id="btnStudents" onclick="showStudents()">Danh sách sinh viên</button>
             </div>
             <div id="attendanceContent">
                 <div class="attendance-empty">Vui lòng chọn lớp để xem điểm danh</div>
             </div>
-            <div style="margin-top: 20px;">
+            <div id="studentsSection" style="margin-top: 20px; display: none;">
                 <div style="font-weight: 700; margin-bottom: 10px;">Danh sách sinh viên</div>
                 <div id="studentsContent"></div>
             </div>
         </div>
 
-        <div class="mode-selection">
+        <div class="mode-selection" id="modeSelection">
             <div class="mode-card" onclick="handleRegisterClick()">
                 <div class="mode-icon">📸</div>
                 <h2>Đăng ký khuôn mặt</h2>
@@ -224,18 +224,92 @@
             const attendanceSection = document.getElementById('attendanceSection');
             const attendanceContent = document.getElementById('attendanceContent');
             const studentsContent = document.getElementById('studentsContent');
+            const modeSelection = document.getElementById('modeSelection');
+            const classActions = document.getElementById('classActions');
+            const classButtons = document.getElementById('classButtons');
+            const studentsSection = document.getElementById('studentsSection');
 
             if (!selectedClass) {
-                alert('Vui lòng chọn lớp');
-                classSelect.focus();
+                document.getElementById('sectionTitle').textContent = 'Danh sách lớp';
+                attendanceSection.style.display = 'block';
+                modeSelection.style.display = 'none';
+                classActions.style.display = 'none';
+                classButtons.style.display = 'none';
+                studentsSection.style.display = 'none';
+                attendanceContent.innerHTML = '<div class="attendance-empty">Đang tải danh sách lớp...</div>';
+                studentsContent.innerHTML = '';
+                loadClassListForDetail();
                 return;
             }
 
+            document.getElementById('sectionTitle').textContent = 'Lớp ' + selectedClass;
             attendanceSection.style.display = 'block';
-            attendanceContent.innerHTML = '<div class="attendance-empty">Đang tải...</div>';
-            studentsContent.innerHTML = '<div class="attendance-empty">Đang tải...</div>';
-            loadAttendance();
-            loadStudents();
+            modeSelection.style.display = 'none';
+            classActions.style.display = 'none';
+            classButtons.style.display = 'flex';
+            studentsSection.style.display = 'none';
+            attendanceContent.style.display = 'none';
+            attendanceContent.innerHTML = '';
+            studentsContent.innerHTML = '';
+            
+            document.getElementById('btnHistory').classList.remove('btn-primary');
+            document.getElementById('btnHistory').classList.add('btn-secondary');
+            document.getElementById('btnStudents').classList.remove('btn-primary');
+            document.getElementById('btnStudents').classList.add('btn-secondary');
+        }
+
+        function loadClassListForDetail() {
+            const attendanceContent = document.getElementById('attendanceContent');
+            fetch('/api/classes')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) {
+                        attendanceContent.innerHTML = '<div class="attendance-empty">Không tải được danh sách lớp</div>';
+                        return;
+                    }
+                    if (!data.classes || data.classes.length === 0) {
+                        attendanceContent.innerHTML = '<div class="attendance-empty">Chưa có lớp nào</div>';
+                        return;
+                    }
+                    let html = '<table class="attendance-table">';
+                    html += '<thead><tr><th>STT</th><th>Tên lớp</th><th></th></tr></thead>';
+                    html += '<tbody>';
+                    data.classes.forEach((className, index) => {
+                        html += `<tr>
+                            <td>${index + 1}</td>
+                            <td>${className}</td>
+                            <td><button class="btn btn-danger" onclick="deleteClass('${className}')">Xóa</button></td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table>';
+                    attendanceContent.innerHTML = html;
+                })
+                .catch(() => {
+                    attendanceContent.innerHTML = '<div class="attendance-empty">Không tải được danh sách lớp</div>';
+                });
+        }
+
+        function deleteClass(className) {
+            if (!confirm(`Xóa lớp ${className}?`)) {
+                return;
+            }
+            fetch(`/api/classes/${encodeURIComponent(className)}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const classSelect = document.getElementById('classSelect');
+                        if (classSelect.value === className) {
+                            classSelect.value = '';
+                        }
+                        loadClasses();
+                        loadClassListForDetail();
+                    } else {
+                        alert(data.message || 'Xóa thất bại');
+                    }
+                })
+                .catch(() => {
+                    alert('Xóa thất bại');
+                });
         }
 
         function loadAttendance() {
@@ -294,16 +368,42 @@
 
         function showHistory() {
             const attendanceContent = document.getElementById('attendanceContent');
-            const studentsContent = document.getElementById('studentsContent');
+            const studentsSection = document.getElementById('studentsSection');
+            const classActions = document.getElementById('classActions');
+            const btnHistory = document.getElementById('btnHistory');
+            const btnStudents = document.getElementById('btnStudents');
+            
             attendanceContent.style.display = 'block';
-            studentsContent.style.display = 'none';
+            studentsSection.style.display = 'none';
+            classActions.style.display = 'block';
+            
+            btnHistory.classList.remove('btn-secondary');
+            btnHistory.classList.add('btn-primary');
+            btnStudents.classList.remove('btn-primary');
+            btnStudents.classList.add('btn-secondary');
+            
+            attendanceContent.innerHTML = '<div class="attendance-empty">Đang tải...</div>';
+            loadAttendance();
         }
 
         function showStudents() {
             const attendanceContent = document.getElementById('attendanceContent');
-            const studentsContent = document.getElementById('studentsContent');
+            const studentsSection = document.getElementById('studentsSection');
+            const classActions = document.getElementById('classActions');
+            const btnHistory = document.getElementById('btnHistory');
+            const btnStudents = document.getElementById('btnStudents');
+            
             attendanceContent.style.display = 'none';
-            studentsContent.style.display = 'block';
+            studentsSection.style.display = 'block';
+            classActions.style.display = 'none';
+            
+            btnStudents.classList.remove('btn-secondary');
+            btnStudents.classList.add('btn-primary');
+            btnHistory.classList.remove('btn-primary');
+            btnHistory.classList.add('btn-secondary');
+            
+            document.getElementById('studentsContent').innerHTML = '<div class="attendance-empty">Đang tải...</div>';
+            loadStudents();
         }
 
         function loadStudents() {
@@ -448,6 +548,7 @@
             const attendanceSection = document.getElementById('attendanceSection');
             classSelect.addEventListener('change', () => {
                 attendanceSection.style.display = 'none';
+                document.getElementById('modeSelection').style.display = 'flex';
             });
             showHistory();
         });

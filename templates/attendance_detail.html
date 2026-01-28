@@ -54,37 +54,32 @@
             border-bottom: none;
         }
 
+        .present-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 0;
+            border-bottom: 1px dashed #e2e8f0;
+        }
+
+        .present-item:last-child {
+            border-bottom: none;
+        }
+
+        .present-item img {
+            width: 44px;
+            height: 44px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1px solid #e2e8f0;
+        }
+
         .summary-line {
             margin-top: 10px;
             font-weight: 600;
         }
 
-        .students-section {
-            margin-top: 20px;
-        }
-
-        .students-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        .students-table th,
-        .students-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .students-table th {
-            background: var(--light);
-            color: var(--dark);
-            font-weight: 600;
-        }
-
-        .students-table tr:hover {
-            background: #f8fafc;
-        }
+        
     </style>
 </head>
 
@@ -97,7 +92,7 @@
                     ← Quay lại
                 </button>
             </div>
-            <h1>📋 Chi tiết điểm danh</h1>
+            <h1>Chi tiết điểm danh</h1>
             <div class="user-info">
                 <span id="username">User</span>
             </div>
@@ -120,17 +115,11 @@
                 </div>
             </div>
 
-            <div class="students-section">
-                <div class="list-title">Danh sách sinh viên</div>
-                <div id="studentsContent"></div>
-            </div>
         </div>
     </div>
 
     <script>
         const sessionId = "{{ session_id }}";
-        let currentClassName = '';
-
         function renderNames(containerId, names) {
             const container = document.getElementById(containerId);
             if (!names || names.length === 0) {
@@ -138,6 +127,20 @@
                 return;
             }
             container.innerHTML = names.map(name => `<div class="name-item">${name}</div>`).join('');
+        }
+
+        function renderPresent(containerId, faces) {
+            const container = document.getElementById(containerId);
+            if (!faces || faces.length === 0) {
+                container.innerHTML = '<div>Không có</div>';
+                return;
+            }
+            container.innerHTML = faces.map(face => {
+                const name = face.name || '';
+                const image = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
+                const imageHtml = image ? `<img src="${image}" alt="${name}">` : '<div style="width:44px;height:44px;border-radius:8px;background:#e2e8f0;"></div>';
+                return `<div class="present-item">${imageHtml}<div>${name}</div></div>`;
+            }).join('');
         }
 
         function loadDetail() {
@@ -167,99 +170,12 @@
                         <div class="summary-line">Vắng: ${s.absent}/${s.total}</div>
                     `;
 
-                    renderNames('presentList', data.present_names);
+                    renderPresent('presentList', data.present_faces || []);
                     renderNames('absentList', data.absent_names);
-                    currentClassName = s.class_name;
-                    loadStudents();
+                    
                 })
                 .catch(() => {
                     document.getElementById('sessionInfo').innerText = 'Không tải được dữ liệu';
-                });
-        }
-
-        function loadStudents() {
-            const container = document.getElementById('studentsContent');
-            if (!currentClassName) {
-                container.innerHTML = '';
-                return;
-            }
-
-            fetch(`/api/class-students?class_name=${encodeURIComponent(currentClassName)}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (!data.success) {
-                        container.innerHTML = '<div>Không tải được danh sách sinh viên</div>';
-                        return;
-                    }
-
-                    if (data.students.length === 0) {
-                        container.innerHTML = '<div>Chưa có sinh viên</div>';
-                        return;
-                    }
-
-                    let html = '<table class="students-table">';
-                    html += '<thead><tr><th>STT</th><th>Tên</th><th></th></tr></thead>';
-                    html += '<tbody>';
-                    data.students.forEach((student, index) => {
-                        html += `<tr>
-                            <td>${index + 1}</td>
-                            <td>${student.name}</td>
-                            <td>
-                                <button class="btn btn-secondary" onclick="editStudent('${student.id}', '${student.name.replace(/'/g, "\\'")}')">Sửa</button>
-                                <button class="btn btn-danger" onclick="deleteStudent('${student.id}')">Xóa</button>
-                            </td>
-                        </tr>`;
-                    });
-                    html += '</tbody></table>';
-                    container.innerHTML = html;
-                })
-                .catch(() => {
-                    container.innerHTML = '<div>Không tải được danh sách sinh viên</div>';
-                });
-        }
-
-        function editStudent(studentId, currentName) {
-            const newName = prompt('Nhập tên mới', currentName || '');
-            if (!newName) {
-                return;
-            }
-
-            fetch(`/api/class-students/${encodeURIComponent(studentId)}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        loadStudents();
-                    } else {
-                        alert('Sửa thất bại');
-                    }
-                })
-                .catch(() => {
-                    alert('Sửa thất bại');
-                });
-        }
-
-        function deleteStudent(studentId) {
-            if (!confirm('Xóa sinh viên này?')) {
-                return;
-            }
-
-            fetch(`/api/class-students/${encodeURIComponent(studentId)}`, {
-                method: 'DELETE'
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        loadStudents();
-                    } else {
-                        alert('Xóa thất bại');
-                    }
-                })
-                .catch(() => {
-                    alert('Xóa thất bại');
                 });
         }
 

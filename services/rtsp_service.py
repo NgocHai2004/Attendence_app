@@ -31,16 +31,20 @@ class RTSPService:
             self.attendance_type = attendance_type
             self.attendance_recorded_today = set()  # Reset attendance tracking
             from datetime import datetime
-            self.session_start_time = datetime.utcnow()
+            self.session_start_time = datetime.now()
             
             # Check if we should use webcam (rtsp_url is "0" or empty)
             use_webcam = not rtsp_url or rtsp_url.strip() == '0' or rtsp_url.strip() == ''
             
             if use_webcam:
-                # Use webcam (camera index 0)
-                self.rtsp_url = '0'  # Store as "0" to indicate webcam
-                self.stream = cv2.VideoCapture(0)
-                print("✓ Attempting to open webcam (camera index 0)...")
+                self.rtsp_url = '0'
+                self.stream = None
+                camera_indices = [0, 1, 2]
+                for index in camera_indices:
+                    self.stream = cv2.VideoCapture(index)
+                    print(f"✓ Attempting to open webcam (camera index {index})...")
+                    if self.stream.isOpened():
+                        break
             else:
                 # Use RTSP stream
                 self.rtsp_url = rtsp_url
@@ -73,7 +77,28 @@ class RTSPService:
         """Stop RTSP stream"""
         if self.class_name and self.user_id and self.session_start_time:
             from datetime import datetime
-            end_time = datetime.utcnow()
+            end_time = datetime.now()
+            present_faces_map = {}
+            for face_data in self.recognized_faces_dict.values():
+                name = face_data.get('name')
+                class_name_for_face = face_data.get('class_name')
+                if name and (class_name_for_face == self.class_name or class_name_for_face is None):
+                    normalized = db_service._normalize_name(name)
+                    if normalized and normalized not in present_faces_map:
+                        present_faces_map[normalized] = {
+                            'name': name,
+                            'face_image': face_data.get('face_image')
+                        }
+                    db_service.create_attendance(
+                        name,
+                        self.class_name,
+                        self.user_id,
+                        self.attendance_type,
+                        attendance_time=end_time,
+                        allow_duplicate=True,
+                        face_image=face_data.get('face_image')
+                    )
+            present_faces = list(present_faces_map.values())
             summary = db_service.get_attendance_summary_in_range(
                 self.class_name,
                 self.attendance_type,
@@ -88,7 +113,8 @@ class RTSPService:
                 end_time,
                 summary.get('present', 0),
                 summary.get('total', 0),
-                summary.get('absent', 0)
+                summary.get('absent', 0),
+                present_faces=present_faces
             )
         self.is_running = False
         if self.thread:
@@ -156,22 +182,24 @@ class RTSPService:
                 encoding = face_service.extract_face_encoding(frame, face_box)
                 
                 if encoding is not None:
-                    # Identify face
-                    name, confidence = face_service.identify_face(encoding, known_faces)
+                    match, confidence = face_service.identify_face(encoding, known_faces)
+                    name = match.get('name') if match else None
+                    msv = match.get('msv') if match else None
                     
                     x, y, w, h = face_box
                     
-                    # Only process if confidence is above threshold
-                    if name and confidence < self.confidence_threshold:
+                    if match and confidence < self.confidence_threshold:
                         continue  # Skip low confidence recognitions
                     
-                    # Create a key for this person (name or position-based for Unknown)
-                    person_key = name if name else f"unknown_{x}_{y}"
+                    normalized_name = db_service._normalize_name(name) if name else ''
+                    person_key = msv or name or f"unknown_{x}_{y}"
                     
                     # Check if we already have this person with higher confidence
                     existing_confidence = None
+                    existing_db_image = None
                     if person_key in self.recognized_faces_dict:
                         existing_confidence = self.recognized_faces_dict[person_key].get('confidence', 0)
+                        existing_db_image = self.recognized_faces_dict[person_key].get('db_image')
                     
                     # Only update if this is a new person or confidence is higher
                     if existing_confidence is None or confidence > existing_confidence:
@@ -185,40 +213,60 @@ class RTSPService:
                             face_image_base64 = base64.b64encode(buffer).decode('utf-8')
                         
                         if name:
-                            # Get face info to check class
-                            face_info = None
-                            for face in known_faces:
-                                if face.get('name') == name:
-                                    face_info = face
-                                    break
-                            
+                            face_info = match
                             class_name_for_face = face_info.get('class_name') if face_info else None
+                            if class_name_for_face is None:
+                                class_name_for_face = self.class_name
                             
-                            # Record attendance if class matches and not already recorded today
+                            db_image_base64 = None
+                            if face_info and face_info.get('image_path'):
+                                try:
+                                    import os
+                                    img_path = face_info['image_path']
+                                    if not os.path.isabs(img_path):
+                                        img_path = os.path.join(os.getcwd(), img_path)
+                                    if os.path.exists(img_path):
+                                        db_img = cv2.imread(img_path)
+                                        if db_img is not None:
+                                            _, db_buffer = cv2.imencode('.jpg', db_img)
+                                            db_image_base64 = base64.b64encode(db_buffer).decode('utf-8')
+                                except:
+                                    pass
+                            
+                            attendance_key = msv or normalized_name
                             if (self.class_name and 
                                 self.user_id and 
                                 class_name_for_face == self.class_name and
-                                name not in self.attendance_recorded_today):
+                                attendance_key not in self.attendance_recorded_today):
                                 
+                                from datetime import datetime
                                 attendance_id = db_service.create_attendance(
                                     name, 
                                     self.class_name, 
                                     self.user_id,
-                                    self.attendance_type
+                                    self.attendance_type,
+                                    attendance_time=datetime.now(),
+                                    allow_duplicate=True,
+                                    face_image=face_image_base64
                                 )
                                 
                                 if attendance_id: 
-                                    self.attendance_recorded_today.add(name)
+                                    self.attendance_recorded_today.add(attendance_key)
                                     print(f"✓ Attendance recorded: {name} - {self.class_name}")
                             
                             new_recognitions[person_key] = {
                                 'name': name,
+                                'msv': msv,
                                 'confidence': round(confidence, 2),
                                 'class_name': class_name_for_face,
                                 'attendance_type': self.attendance_type,
-                                # 'box': {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)},
-                                'face_image': face_image_base64
+                                'box': {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)},
+                                'face_image': face_image_base64,
+                                'db_image': db_image_base64
                             }
+                    if person_key in self.recognized_faces_dict and existing_db_image is None and 'db_image' in new_recognitions.get(person_key, {}):
+                        if new_recognitions[person_key].get('db_image'):
+                            self.recognized_faces_dict[person_key]['db_image'] = new_recognitions[person_key]['db_image']
             
             # Update recognized_faces_dict with new or better recognitions
             for key, face_data in new_recognitions.items():
@@ -235,36 +283,33 @@ class RTSPService:
             # Don't clear on error, keep previous results
     
     def get_current_frame(self):
-        """Get current frame with face boxes drawn"""
+        """Get current frame without face boxes"""
         if self.current_frame is None:
             return None
         
-        frame = self.current_frame.copy()
-        
-        # Draw bounding boxes and names
-        for face in self.recognized_faces:
-            box = face['box']
-            name = face['name']
-            confidence = face['confidence']
-            
-            x, y, w, h = box['x'], box['y'], box['w'], box['h']
-            
-            # Choose color based on recognition
-            color = (0, 255, 0) if name != 'Unknown' else (0, 0, 255)
-            
-            # Draw rectangle
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            
-            # Draw label
-            label = f"{name} ({confidence}%)" if name != 'Unknown' else "Unknown"
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 
-                       0.6, color, 2)
-        
-        return frame
+        return self.current_frame.copy()
     
     def get_recognized_faces(self):
         """Get list of currently recognized faces"""
         return self.recognized_faces
+
+    def get_session_summary(self):
+        if not self.class_name:
+            return {'present': 0, 'absent': 0, 'total': 0}
+        student_names = db_service.get_class_students(self.class_name)
+        normalized_students = {db_service._normalize_name(name) for name in student_names if name}
+        present_normalized = set()
+        for face_data in self.recognized_faces_dict.values():
+            name = face_data.get('name')
+            class_name_for_face = face_data.get('class_name') or self.class_name
+            if name and class_name_for_face == self.class_name:
+                present_normalized.add(db_service._normalize_name(name))
+        present = len(present_normalized & normalized_students)
+        total = len(normalized_students)
+        absent = total - present
+        if absent < 0:
+            absent = 0
+        return {'present': present, 'absent': absent, 'total': total}
 
 # Global RTSP service instance
 rtsp_service = RTSPService()

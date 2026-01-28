@@ -78,10 +78,16 @@ function stopCamera() {
 
 async function captureAndRegister() {
     const name = document.getElementById('personName').value.trim();
+    const msv = document.getElementById('personMsv').value.trim();
     const className = document.getElementById('className').value.trim();
 
     if (!name) {
         showStatus('Vui lòng nhập tên người', 'warning');
+        return;
+    }
+
+    if (!msv) {
+        showStatus('Vui lòng nhập MSV', 'warning');
         return;
     }
 
@@ -115,7 +121,7 @@ async function captureAndRegister() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ name, class_name: className, image: imageData })
+            body: JSON.stringify({ name, msv, class_name: className, image: imageData })
         });
 
         const data = await response.json();
@@ -123,6 +129,7 @@ async function captureAndRegister() {
         if (data.success) {
             showStatus(data.message, 'success');
             document.getElementById('personName').value = '';
+            document.getElementById('personMsv').value = '';
             document.getElementById('className').value = '';
         } else {
             showStatus(data.message, 'error');
@@ -143,11 +150,17 @@ function previewImage() {
 
 async function uploadAndRegister() {
     const name = document.getElementById('uploadPersonName').value.trim();
+    const msv = document.getElementById('uploadPersonMsv').value.trim();
     const className = document.getElementById('uploadClassName').value.trim();
     const fileInput = document.getElementById('imageUpload');
 
     if (!name) {
         showStatus('Vui lòng nhập tên người', 'warning');
+        return;
+    }
+
+    if (!msv) {
+        showStatus('Vui lòng nhập MSV', 'warning');
         return;
     }
 
@@ -164,6 +177,7 @@ async function uploadAndRegister() {
     try {
         const formData = new FormData();
         formData.append('name', name);
+        formData.append('msv', msv);
         formData.append('class_name', className);
         formData.append('image', fileInput.files[0]);
 
@@ -179,6 +193,7 @@ async function uploadAndRegister() {
         if (data.success) {
             showStatus(data.message, 'success');
             document.getElementById('uploadPersonName').value = '';
+            document.getElementById('uploadPersonMsv').value = '';
             document.getElementById('uploadClassName').value = '';
             fileInput.value = '';
         } else {

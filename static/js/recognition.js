@@ -196,27 +196,30 @@ function updateRecognizedFaces(faces) {
         const isUnknown = face.name === 'Unknown';
         const confidenceColor = isUnknown ? '#ef4444' : '#10b981';
         const faceImageSrc = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
+        const dbImageSrc = face.db_image ? `data:image/jpeg;base64,${face.db_image}` : '';
         const showFaceImage = !isUnknown && faceImageSrc;
 
         const modeLabel = face.attendance_type === 'in' ? 'VÀO' : 'RA';
         const modeClass = face.attendance_type === 'in' ? 'mode-in-label' : 'mode-out-label';
+        const now = new Date();
+        const dateTimeStr = now.toLocaleDateString('vi-VN') + ' ' + now.toLocaleTimeString('vi-VN');
 
         html += `
-            <div class="face-item">
-                <div class="face-info">
-                    <div class="face-header">
-                        <div class="name">
-                            ${face.name}
-                            <span class="${modeClass}">${modeLabel}</span>
-                        </div>
-                        ${showFaceImage ? `
-                            <img src="${faceImageSrc}" alt="Face" class="face-thumbnail" />
-                        ` : ''}
-                    </div>
-                    <div class="time">Vị trí: x=${face.box.x}, y=${face.box.y}</div>
+            <div class="face-item-new">
+                <div class="face-col-recognition">
+                    ${showFaceImage ? `
+                        <img src="${faceImageSrc}" alt="Face" class="face-img" />
+                        <div class="face-img-label" style="color: ${confidenceColor};">${isUnknown ? '---' : face.confidence + '%'}</div>
+                    ` : ''}
                 </div>
-                <div class="confidence" style="color: ${confidenceColor};">
-                    ${isUnknown ? '---' : face.confidence + '%'}
+                <div class="face-col-db">
+                    ${dbImageSrc ? `<img src="${dbImageSrc}" alt="DB Face" class="face-img" />` : ''}
+                    <div class="face-img-label">${face.name}</div>
+                </div>
+                <div class="face-status-section">
+                    <div class="status-row">MSV: ${face.msv || '---'}</div>
+                    <div class="status-row"><span class="${modeClass}">${modeLabel}</span></div>
+                    <div class="status-datetime">${dateTimeStr}</div>
                 </div>
             </div>
         `;

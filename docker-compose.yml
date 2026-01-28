@@ -1,14 +1,19 @@
-version: "3.9"
 services:
   mongo:
     image: mongo:6
+    container_name: attendance_mongo
     restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: attendance_app
+    restart: unless-stopped
     ports:
       - "5000:5000"
     security_opt:
@@ -20,7 +25,9 @@ services:
       - FLASK_ENV=development
     volumes:
       - ./uploads:/app/uploads
+      - ./model_insight:/app/model_insight
     depends_on:
       - mongo
+
 volumes:
   mongo_data:

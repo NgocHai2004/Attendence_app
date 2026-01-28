@@ -151,20 +151,29 @@ def api_register_face_camera():
         
         data = request.get_json()
         name = data.get('name')
+        msv = data.get('msv')
         image_data = data.get('image')  # Base64 encoded image
         class_name = data.get('class_name')  # Class name
         print("DEBUG class_name:", class_name)
         
-        if not all([name, image_data]):
-            return jsonify({'success': False, 'message': 'Missing name or image'}), 400
+        if not all([name, msv, image_data]):
+            return jsonify({'success': False, 'message': 'Thiếu tên, MSV hoặc ảnh'}), 400
         
         if not class_name:
             return jsonify({'success': False, 'message': 'Class name is required'}), 400
+
+        if db_service.get_face_by_msv(msv, class_name):
+            return jsonify({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}), 400
         
-        # Decode base64 image
+        if ',' not in image_data:
+            return jsonify({'success': False, 'message': 'Invalid image format'}), 400
+        
         image_bytes = base64.b64decode(image_data.split(',')[1])
         nparr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
         
         # Detect face
         faces = face_service.detect_faces(image)
@@ -175,24 +184,21 @@ def api_register_face_camera():
         if len(faces) > 1:
             return jsonify({'success': False, 'message': 'Multiple faces detected. Please ensure only one face is visible'}), 400
         
-        # Extract face encoding
         face_box = faces[0]
         encoding = face_service.extract_face_encoding(image, face_box)
         
         if encoding is None:
             return jsonify({'success': False, 'message': 'Failed to extract face encoding'}), 500
         
-        # Save image
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        image_filename = f"{name}_{timestamp}.jpg"
+        image_filename = f"{msv}_{timestamp}.jpg"
         image_path = UPLOAD_FOLDER / image_filename
         cv2.imwrite(str(image_path), image)
         
-        # Save to database
-        face_id = db_service.create_face(name, encoding, str(image_path), session['user_id'],class_name)
+        face_id = db_service.create_face(name, msv, encoding, str(image_path), session['user_id'], class_name)
         
         if face_id:
-            return jsonify({'success': True, 'message': f'Face registered successfully for {name}'})
+            return jsonify({'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'})
         else:
             return jsonify({'success': False, 'message': 'Failed to save face data'}), 500
             
@@ -207,22 +213,31 @@ def api_register_face_upload():
             return jsonify({'success': False, 'message': 'Not authenticated'}), 401
         
         name = request.form.get('name')
+        msv = request.form.get('msv')
         class_name = request.form.get('class_name')
         
         if 'image' not in request.files:
             return jsonify({'success': False, 'message': 'No image file provided'}), 400
         
         if not name:
-            return jsonify({'success': False, 'message': 'Name is required'}), 400
+            return jsonify({'success': False, 'message': 'Vui lòng nhập tên'}), 400
+
+        if not msv:
+            return jsonify({'success': False, 'message': 'Vui lòng nhập MSV'}), 400
         
         if class_name == '':
             return jsonify({'success': False, 'message': 'Class name is required'}), 400
+
+        if db_service.get_face_by_msv(msv, class_name):
+            return jsonify({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}), 400
         
         file = request.files['image']
         
-        # Read image
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
         
         # Detect face
         faces = face_service.detect_faces(image)
@@ -233,24 +248,21 @@ def api_register_face_upload():
         if len(faces) > 1:
             return jsonify({'success': False, 'message': 'Multiple faces detected. Please upload image with only one face'}), 400
         
-        # Extract face encoding
         face_box = faces[0]
         encoding = face_service.extract_face_encoding(image, face_box)
         
         if encoding is None:
             return jsonify({'success': False, 'message': 'Failed to extract face encoding'}), 500
         
-        # Save image
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        image_filename = f"{name}_{timestamp}.jpg"
+        image_filename = f"{msv}_{timestamp}.jpg"
         image_path = UPLOAD_FOLDER / image_filename
         cv2.imwrite(str(image_path), image)
         
-        # Save to database
-        face_id = db_service.create_face(name, encoding, str(image_path), session['user_id'], class_name)
+        face_id = db_service.create_face(name, msv, encoding, str(image_path), session['user_id'], class_name)
         
         if face_id:
-            return jsonify({'success': True, 'message': f'Face registered successfully for {name}'})
+            return jsonify({'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'})
         else:
             return jsonify({'success': False, 'message': 'Failed to save face data'}), 500
             
@@ -267,6 +279,23 @@ def api_get_classes():
         classes = db_service.get_all_classes()
         return jsonify({'success': True, 'classes': classes})
         
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/classes/<class_name>', methods=['DELETE'])
+def api_delete_class(class_name):
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        if not class_name:
+            return jsonify({'success': False, 'message': 'Thiếu tên lớp'}), 400
+
+        result = db_service.delete_class(class_name)
+        if result is None:
+            return jsonify({'success': False, 'message': 'Xóa lớp thất bại'}), 500
+
+        return jsonify({'success': True, 'deleted': result})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -304,13 +333,7 @@ def api_get_attendance_summary():
         use_session = request.args.get('session') == '1'
         if use_session and rtsp_service.is_running and rtsp_service.session_start_time:
             if class_name == rtsp_service.class_name and attendance_type == rtsp_service.attendance_type:
-                from datetime import datetime
-                summary = db_service.get_attendance_summary_in_range(
-                    class_name,
-                    attendance_type,
-                    rtsp_service.session_start_time,
-                    datetime.utcnow()
-                )
+                summary = rtsp_service.get_session_summary()
             else:
                 summary = db_service.get_attendance_summary(class_name, attendance_type)
         else:
@@ -418,14 +441,42 @@ def api_get_attendance_session_detail():
         start_time = session_record.get('start_time')
         end_time = session_record.get('end_time')
 
-        present_names = db_service.get_attendance_names_in_range(
+        records = db_service.get_attendance_records_in_range(
             class_name,
             attendance_type,
             start_time,
             end_time
         )
+        present_map = {}
+        for record in records:
+            name = record.get('name') or ''
+            normalized = db_service._normalize_name(name)
+            if not normalized:
+                continue
+            existing = present_map.get(normalized)
+            if existing is None or record.get('timestamp') > existing.get('timestamp'):
+                present_map[normalized] = record
+
+        present_faces = []
+        if present_map:
+            for record in present_map.values():
+                present_faces.append({
+                    'name': record.get('name'),
+                    'face_image': record.get('face_image')
+                })
+        elif session_record.get('present_faces'):
+            present_faces = session_record.get('present_faces', [])
+
         all_students = db_service.get_class_students(class_name)
-        absent_names = [name for name in all_students if name not in present_names]
+        present_normalized = {db_service._normalize_name(face.get('name')) for face in present_faces if face.get('name')}
+        absent_names = []
+        for name in all_students:
+            if db_service._normalize_name(name) not in present_normalized:
+                absent_names.append(name)
+
+        total_students = len(all_students)
+        present_count = len(present_faces)
+        absent_count = len(absent_names)
 
         return jsonify({
             'success': True,
@@ -434,11 +485,12 @@ def api_get_attendance_session_detail():
                 'attendance_type': attendance_type,
                 'start_time': start_time.isoformat() if hasattr(start_time, 'isoformat') else start_time,
                 'end_time': end_time.isoformat() if hasattr(end_time, 'isoformat') else end_time,
-                'present': session_record.get('present', 0),
-                'absent': session_record.get('absent', 0),
-                'total': session_record.get('total', 0)
+                'present': present_count,
+                'absent': absent_count,
+                'total': total_students
             },
-            'present_names': present_names,
+            'present_names': [face.get('name') for face in present_faces],
+            'present_faces': present_faces,
             'absent_names': absent_names
         })
 
@@ -505,6 +557,7 @@ def api_get_faces():
             face_list.append({
                 'id': str(face['_id']),
                 'name': face['name'],
+                'msv': face.get('msv'),
                 'class_name': face.get('class_name'),
                 'created_at': face['created_at'].isoformat() if face.get('created_at') else None
             })

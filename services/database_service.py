@@ -1,4 +1,6 @@
 import os
+import unicodedata
+from datetime import datetime
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import bcrypt
@@ -35,6 +37,7 @@ class DatabaseService:
             self.users_collection.create_index('username', unique=True)
             self.faces_collection.create_index('user_id')
             self.faces_collection.create_index('class_name')
+            self.faces_collection.create_index('msv')
             self.attendance_collection.create_index('class_name')
             self.attendance_collection.create_index('date')
             self.attendance_collection.create_index([('class_name', 1), ('date', -1)])
@@ -45,6 +48,13 @@ class DatabaseService:
         except Exception as e:
             print(f"✗ Error connecting to MongoDB: {e}")
             raise
+
+    def _normalize_name(self, name):
+        if not name:
+            return ''
+        normalized = unicodedata.normalize('NFD', name)
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return normalized.strip().lower()
     
     # User operations
     def create_user(self, username, email, password):
@@ -60,8 +70,7 @@ class DatabaseService:
                 'created_at': None
             }
             
-            from models.user import User
-            from datetime import datetime
+            
             user_data['created_at'] = datetime.utcnow()
             
             result = self.users_collection.insert_one(user_data)
@@ -83,7 +92,7 @@ class DatabaseService:
         return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
     
     # Face operations
-    def create_face(self, name, encoding, image_path, user_id, class_name=None):
+    def create_face(self, name, msv, encoding, image_path, user_id, class_name=None):
         """Create a new face entry"""
         try:
             from datetime import datetime
@@ -91,6 +100,7 @@ class DatabaseService:
             
             face_data = {
                 'name': name,
+                'msv': msv,
                 'encoding': encoding.tolist() if hasattr(encoding, 'tolist') else encoding,
                 'image_path': image_path,
                 'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
@@ -102,6 +112,16 @@ class DatabaseService:
             return str(result.inserted_id)
         except Exception as e:
             print(f"Error creating face: {e}")
+            return None
+
+    def get_face_by_msv(self, msv, class_name=None):
+        try:
+            query = {'msv': msv}
+            if class_name:
+                query['class_name'] = class_name
+            return self.faces_collection.find_one(query)
+        except Exception as e:
+            print(f"Error getting face by msv: {e}")
             return None
     
     def get_all_faces(self):
@@ -127,6 +147,7 @@ class DatabaseService:
                 result.append({
                     'id': str(face['_id']),
                     'name': face.get('name', ''),
+                    'msv': face.get('msv', ''),
                     'class_name': face.get('class_name')
                 })
             return result
@@ -151,31 +172,44 @@ class DatabaseService:
         """Get all unique class names"""
         classes = self.faces_collection.distinct('class_name')
         return [c for c in classes if c]  # Filter out None values
+
+    def delete_class(self, class_name):
+        try:
+            faces_result = self.faces_collection.delete_many({'class_name': class_name})
+            attendance_result = self.attendance_collection.delete_many({'class_name': class_name})
+            sessions_result = self.attendance_sessions_collection.delete_many({'class_name': class_name})
+            return {
+                'faces_deleted': faces_result.deleted_count,
+                'attendance_deleted': attendance_result.deleted_count,
+                'sessions_deleted': sessions_result.deleted_count
+            }
+        except Exception as e:
+            print(f"Error deleting class: {e}")
+            return None
     
     # Attendance operations
-    def create_attendance(self, name, class_name, user_id, attendance_type='in'):
-        """Create an attendance record"""
+    def create_attendance(self, name, class_name, user_id, attendance_type='in', attendance_time=None, allow_duplicate=False, face_image=None):
         try:
             from datetime import datetime, timedelta
             from bson import ObjectId
             
-            # Check if attendance already recorded today for this person, class and type
-            now = datetime.utcnow()
-            today_start = datetime(now.year, now.month, now.day)
-            today_end = today_start + timedelta(days=1)
-            
-            existing = self.attendance_collection.find_one({
-                'name': name,
-                'class_name': class_name,
-                'attendance_type': attendance_type,
-                'timestamp': {
-                    '$gte': today_start,
-                    '$lt': today_end
-                }
-            })
-            
-            if existing:
-                return str(existing['_id'])  # Return existing record ID
+            now = attendance_time or datetime.now()
+            if not allow_duplicate:
+                today_start = datetime(now.year, now.month, now.day)
+                today_end = today_start + timedelta(days=1)
+                
+                existing = self.attendance_collection.find_one({
+                    'name': name,
+                    'class_name': class_name,
+                    'attendance_type': attendance_type,
+                    'timestamp': {
+                        '$gte': today_start,
+                        '$lt': today_end
+                    }
+                })
+                
+                if existing:
+                    return str(existing['_id'])
             
             attendance_data = {
                 'name': name,
@@ -185,6 +219,8 @@ class DatabaseService:
                 'date': now.date(),
                 'timestamp': now
             }
+            if face_image:
+                attendance_data['face_image'] = face_image
             
             result = self.attendance_collection.insert_one(attendance_data)
             return str(result.inserted_id)
@@ -239,9 +275,11 @@ class DatabaseService:
         try:
             from datetime import datetime, timedelta
 
-            total_students = len(self.faces_collection.distinct('name', {'class_name': class_name}))
+            student_names = self.faces_collection.distinct('name', {'class_name': class_name})
+            normalized_students = {self._normalize_name(name) for name in student_names if name}
+            total_students = len(normalized_students)
 
-            now = datetime.utcnow()
+            now = datetime.now()
             today_start = datetime(now.year, now.month, now.day)
             today_end = today_start + timedelta(days=1)
 
@@ -255,8 +293,10 @@ class DatabaseService:
             if attendance_type:
                 summary_query['attendance_type'] = attendance_type
 
-            present_students = len(self.attendance_collection.distinct('name', summary_query))
+            present_names = self.attendance_collection.distinct('name', summary_query)
+            normalized_present = {self._normalize_name(name) for name in present_names if name}
 
+            present_students = len(normalized_present & normalized_students)
             absent_students = total_students - present_students
             if absent_students < 0:
                 absent_students = 0
@@ -276,19 +316,23 @@ class DatabaseService:
 
     def get_attendance_summary_in_range(self, class_name, attendance_type, start_time, end_time):
         try:
-            total_students = len(self.faces_collection.distinct('name', {'class_name': class_name}))
+            student_names = self.faces_collection.distinct('name', {'class_name': class_name})
+            normalized_students = {self._normalize_name(name) for name in student_names if name}
+            total_students = len(normalized_students)
 
             summary_query = {
                 'class_name': class_name,
                 'attendance_type': attendance_type,
                 'timestamp': {
                     '$gte': start_time,
-                    '$lt': end_time
+                    '$lte': end_time
                 }
             }
 
-            present_students = len(self.attendance_collection.distinct('name', summary_query))
+            present_names = self.attendance_collection.distinct('name', summary_query)
+            normalized_present = {self._normalize_name(name) for name in present_names if name}
 
+            present_students = len(normalized_present & normalized_students)
             absent_students = total_students - present_students
             if absent_students < 0:
                 absent_students = 0
@@ -306,7 +350,7 @@ class DatabaseService:
                 'total': 0
             }
 
-    def create_attendance_session(self, class_name, attendance_type, user_id, start_time, end_time, present, total, absent):
+    def create_attendance_session(self, class_name, attendance_type, user_id, start_time, end_time, present, total, absent, present_faces=None):
         try:
             from bson import ObjectId
             session_data = {
@@ -319,6 +363,8 @@ class DatabaseService:
                 'absent': absent,
                 'total': total
             }
+            if present_faces:
+                session_data['present_faces'] = present_faces
             result = self.attendance_sessions_collection.insert_one(session_data)
             return str(result.inserted_id)
         except Exception as e:
@@ -336,6 +382,28 @@ class DatabaseService:
             for record in sessions:
                 start_time = record.get('start_time')
                 end_time = record.get('end_time')
+                attendance_type = record.get('attendance_type')
+
+                student_names = self.get_class_students(class_name)
+                normalized_students = {self._normalize_name(name) for name in student_names if name}
+                total_students = len(normalized_students)
+
+                present_faces = record.get('present_faces') or []
+                if present_faces:
+                    present_normalized = {self._normalize_name(face.get('name')) for face in present_faces if face.get('name')}
+                else:
+                    records_in_range = self.get_attendance_records_in_range(
+                        class_name,
+                        attendance_type,
+                        start_time,
+                        end_time
+                    )
+                    present_normalized = {self._normalize_name(r.get('name')) for r in records_in_range if r.get('name')}
+
+                present_count = len(present_normalized & normalized_students)
+                absent_count = total_students - present_count
+                if absent_count < 0:
+                    absent_count = 0
 
                 if isinstance(start_time, datetime):
                     start_str = start_time.isoformat()
@@ -350,12 +418,12 @@ class DatabaseService:
                 result.append({
                     'id': str(record['_id']),
                     'class_name': record.get('class_name'),
-                    'attendance_type': record.get('attendance_type'),
+                    'attendance_type': attendance_type,
                     'start_time': start_str,
                     'end_time': end_str,
-                    'present': record.get('present', 0),
-                    'absent': record.get('absent', 0),
-                    'total': record.get('total', 0)
+                    'present': present_count,
+                    'absent': absent_count,
+                    'total': total_students
                 })
             return result
         except Exception as e:
@@ -376,7 +444,8 @@ class DatabaseService:
                 'end_time': record.get('end_time'),
                 'present': record.get('present', 0),
                 'absent': record.get('absent', 0),
-                'total': record.get('total', 0)
+                'total': record.get('total', 0),
+                'present_faces': record.get('present_faces', [])
             }
         except Exception as e:
             print(f"Error getting attendance session by id: {e}")
@@ -396,11 +465,33 @@ class DatabaseService:
                 'attendance_type': attendance_type,
                 'timestamp': {
                     '$gte': start_time,
-                    '$lt': end_time
+                    '$lte': end_time
                 }
             }))
         except Exception as e:
             print(f"Error getting attendance names in range: {e}")
+            return []
+
+    def get_attendance_records_in_range(self, class_name, attendance_type, start_time, end_time):
+        try:
+            records = self.attendance_collection.find({
+                'class_name': class_name,
+                'attendance_type': attendance_type,
+                'timestamp': {
+                    '$gte': start_time,
+                    '$lte': end_time
+                }
+            }).sort('timestamp', 1)
+            result = []
+            for record in records:
+                result.append({
+                    'name': record.get('name'),
+                    'face_image': record.get('face_image'),
+                    'timestamp': record.get('timestamp')
+                })
+            return result
+        except Exception as e:
+            print(f"Error getting attendance records in range: {e}")
             return []
 
     def delete_attendance_sessions(self, session_ids):
