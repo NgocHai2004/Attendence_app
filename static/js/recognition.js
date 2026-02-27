@@ -1,10 +1,9 @@
-// RTSP Recognition JavaScript
-
 let recognitionInterval = null;
 let isStreamRunning = false;
 let lastSummaryUpdate = 0;
+let browserCameraStream = null;
+let captureInterval = null;
 
-// Logout function
 function logout() {
     fetch('/api/logout')
         .then(() => {
@@ -16,7 +15,6 @@ function logout() {
         });
 }
 
-// Show status message
 function showStatus(message, type = 'info') {
     const element = document.getElementById('rtspStatus');
     const colors = {
@@ -34,13 +32,16 @@ function showStatus(message, type = 'info') {
     `;
 }
 
-// RTSP Functions
+function getCameraMode() {
+    const modeInput = document.querySelector('input[name="cameraMode"]:checked');
+    return modeInput ? modeInput.value : 'browser';
+}
+
 async function startRTSP() {
-    const rtspUrl = document.getElementById('rtspUrl').value.trim();
+    const cameraMode = getCameraMode();
     const urlParams = new URLSearchParams(window.location.search);
     const class_name = urlParams.get('class_name');
 
-    // Get attendance type
     const modeInput = document.querySelector('input[name="attendanceMode"]:checked');
     if (!modeInput) {
         showStatus('Vui lòng chọn chế độ điểm danh (VÀO hoặc RA)!', 'warning');
@@ -54,48 +55,122 @@ async function startRTSP() {
         return;
     }
 
-    // Allow empty or "0" to use webcam
+    if (cameraMode === 'browser') {
+        await startBrowserCamera(class_name, attendance_type);
+    } else {
+        await startServerCamera(class_name, attendance_type);
+    }
+}
+
+async function startBrowserCamera(class_name, attendance_type) {
+    try {
+        showStatus('Đang kết nối camera trình duyệt...', 'info');
+
+        await fetch('/api/browser-session/start', { method: 'POST' });
+
+        const video = document.getElementById('browserCamera');
+        const rtspImg = document.getElementById('rtspStream');
+        
+        browserCameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 }
+        });
+        
+        video.srcObject = browserCameraStream;
+        video.style.display = 'block';
+        rtspImg.style.display = 'none';
+        
+        isStreamRunning = true;
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+        document.querySelectorAll('input[name="attendanceMode"]').forEach(input => input.disabled = true);
+        document.querySelectorAll('input[name="cameraMode"]').forEach(input => input.disabled = true);
+
+        const modeText = attendance_type === 'in' ? 'VÀO' : 'RA';
+        showStatus(`Đang điểm danh <strong>${modeText}</strong> cho lớp: <strong>${class_name}</strong>`, 'success');
+
+        captureInterval = setInterval(() => {
+            captureAndRecognize(class_name, attendance_type);
+        }, 1000);
+
+        loadAttendanceSummary(attendance_type);
+
+    } catch (error) {
+        showStatus('Không thể truy cập camera: ' + error.message, 'error');
+        console.error('Camera error:', error);
+    }
+}
+
+async function captureAndRecognize(class_name, attendance_type) {
+    if (!isStreamRunning) return;
+
+    const video = document.getElementById('browserCamera');
+    const canvas = document.getElementById('captureCanvas');
+    
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    
+    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+    try {
+        const response = await fetch('/api/recognize-frame', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image: imageData,
+                class_name: class_name,
+                attendance_type: attendance_type
+            })
+        });
+
+        const data = await response.json();
+        if (data.success && data.faces && data.faces.length > 0) {
+            updateRecognizedFaces(data.faces);
+        }
+        refreshAttendanceSummary();
+    } catch (error) {
+        console.error('Recognition error:', error);
+    }
+}
+
+async function startServerCamera(class_name, attendance_type) {
+    const rtspUrl = document.getElementById('rtspUrl').value.trim();
     const useWebcam = !rtspUrl || rtspUrl === '0';
 
     try {
-        const sourceName = useWebcam ? 'camera máy tính' : 'RTSP';
+        const sourceName = useWebcam ? 'camera server' : 'RTSP';
         showStatus(`Đang kết nối ${sourceName}...`, 'info');
-
-        const requestBody = {
-            rtsp_url: rtspUrl || '0',
-            class_name: class_name,
-            attendance_type: attendance_type
-        };
 
         const response = await fetch('/api/start-rtsp', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rtsp_url: rtspUrl || '0',
+                class_name: class_name,
+                attendance_type: attendance_type
+            })
         });
 
         const data = await response.json();
 
         if (data.success) {
             const modeText = attendance_type === 'in' ? 'VÀO' : 'RA';
-            showStatus(`Đã bắt đầu điểm danh <strong>${modeText}</strong> cho lớp: <strong>${class_name}</strong>`, 'success');
+            showStatus(`Đang điểm danh <strong>${modeText}</strong> cho lớp: <strong>${class_name}</strong>`, 'success');
             isStreamRunning = true;
 
-            // Update button states
             document.getElementById('startBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
-
-            // Disable mode selection while running
             document.querySelectorAll('input[name="attendanceMode"]').forEach(input => input.disabled = true);
+            document.querySelectorAll('input[name="cameraMode"]').forEach(input => input.disabled = true);
 
-            // Start video feed
             const img = document.getElementById('rtspStream');
+            const video = document.getElementById('browserCamera');
+            img.style.display = 'block';
+            video.style.display = 'none';
             img.src = '/api/video-feed?' + new Date().getTime();
 
-            // Start polling for recognized faces
             startRecognitionPolling();
-
             loadAttendanceSummary(attendance_type);
         } else {
             showStatus(data.message, 'error');
@@ -107,46 +182,55 @@ async function startRTSP() {
 }
 
 async function stopRTSP() {
-    try {
-        const response = await fetch('/api/stop-rtsp');
-        const data = await response.json();
+    const cameraMode = getCameraMode();
+    const urlParams = new URLSearchParams(window.location.search);
+    const class_name = urlParams.get('class_name');
+    const modeInput = document.querySelector('input[name="attendanceMode"]:checked');
+    const attendance_type = modeInput ? modeInput.value : 'in';
 
-        if (data.success) {
-            showStatus('RTSP stream đã dừng', 'info');
-            isStreamRunning = false;
-
-            // Update button states
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
-
-            // Stop video feed
-            const img = document.getElementById('rtspStream');
-            img.src = '';
-
-            // Stop polling
-            stopRecognitionPolling();
-
-            // Clear recognized faces
-            document.getElementById('recognizedFaces').innerHTML = `
-                <p style="text-align: center; color: #64748b; padding: 20px;">
-                    Chưa có khuôn mặt nào được nhận diện
-                </p>
-            `;
-
-            // Re-enable mode selection
-            document.querySelectorAll('input[name="attendanceMode"]').forEach(input => input.disabled = false);
-
-            clearAttendanceSummary();
-        } else {
-            showStatus(data.message, 'error');
+    if (cameraMode === 'browser') {
+        if (captureInterval) {
+            clearInterval(captureInterval);
+            captureInterval = null;
         }
-    } catch (error) {
-        showStatus('Lỗi: ' + error.message, 'error');
-        console.error('Stop RTSP error:', error);
+        if (browserCameraStream) {
+            browserCameraStream.getTracks().forEach(track => track.stop());
+            browserCameraStream = null;
+        }
+        document.getElementById('browserCamera').srcObject = null;
+        
+        await fetch('/api/browser-session/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ class_name, attendance_type })
+        });
+        
+        showStatus('Camera đã dừng', 'info');
+    } else {
+        try {
+            await fetch('/api/stop-rtsp');
+            showStatus('RTSP stream đã dừng', 'info');
+            stopRecognitionPolling();
+            document.getElementById('rtspStream').src = '';
+        } catch (error) {
+            showStatus('Lỗi: ' + error.message, 'error');
+        }
     }
+
+    isStreamRunning = false;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    document.querySelectorAll('input[name="attendanceMode"]').forEach(input => input.disabled = false);
+    document.querySelectorAll('input[name="cameraMode"]').forEach(input => input.disabled = false);
+
+    document.getElementById('recognizedFaces').innerHTML = `
+        <p style="text-align: center; color: #64748b; padding: 20px;">
+            Chưa có khuôn mặt nào được nhận diện
+        </p>
+    `;
+    clearAttendanceSummary();
 }
 
-// Recognition Polling
 function startRecognitionPolling() {
     if (recognitionInterval) {
         clearInterval(recognitionInterval);
@@ -169,7 +253,7 @@ function startRecognitionPolling() {
         } catch (error) {
             console.error('Recognition polling error:', error);
         }
-    }, 1000); // Poll every second
+    }, 1000);
 }
 
 function stopRecognitionPolling() {
@@ -240,9 +324,7 @@ async function loadAttendanceSummary(attendance_type) {
     const class_name = urlParams.get('class_name');
     const container = document.getElementById('attendanceSummary');
 
-    if (!class_name || !container) {
-        return;
-    }
+    if (!class_name || !container) return;
 
     const typeQuery = attendance_type ? `&attendance_type=${encodeURIComponent(attendance_type)}` : '';
 
@@ -266,28 +348,24 @@ async function loadAttendanceSummary(attendance_type) {
 
 function refreshAttendanceSummary() {
     const now = Date.now();
-    if (now - lastSummaryUpdate < 5000) {
-        return;
-    }
+    if (now - lastSummaryUpdate < 5000) return;
     lastSummaryUpdate = now;
     const modeInput = document.querySelector('input[name="attendanceMode"]:checked');
     const attendance_type = modeInput ? modeInput.value : null;
     loadAttendanceSummary(attendance_type);
 }
 
-// Initialize and event listeners
 window.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const class_name = urlParams.get('class_name');
 
     if (class_name) {
-        showStatus(`Sẵn sàng điểm danh cho lớp: <strong>${class_name}</strong>. Vui lòng chọn chế độ VÀO/RA và nhấn BẮT ĐẦU.`, 'info');
+        showStatus(`Sẵn sàng điểm danh cho lớp: <strong>${class_name}</strong>. Vui lòng chọn chế độ và nhấn BẮT ĐẦU.`, 'info');
     } else {
         showStatus('Thiếu thông tin lớp học. Đang quay lại Dashboard...', 'error');
         setTimeout(() => window.location.href = '/dashboard', 2000);
     }
 
-    // Add listener to radio buttons for immediate feedback
     document.querySelectorAll('input[name="attendanceMode"]').forEach(input => {
         input.addEventListener('change', () => {
             const modeText = input.value === 'in' ? 'VÀO' : 'RA';
@@ -296,9 +374,19 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    document.querySelectorAll('input[name="cameraMode"]').forEach(input => {
+        input.addEventListener('change', () => {
+            const rtspGroup = document.getElementById('rtspUrlGroup');
+            if (input.value === 'server') {
+                rtspGroup.style.display = 'flex';
+            } else {
+                rtspGroup.style.display = 'none';
+            }
+        });
+    });
 });
 
-// Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     if (isStreamRunning) {
         stopRTSP();

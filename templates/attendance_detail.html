@@ -4,142 +4,493 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chi tiết điểm danh</title>
+    <title>Chi tiết điểm danh - Hệ thống điểm danh HAUI</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="/static/css/brand.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        .detail-section {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 25px;
-            margin-top: 20px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        /* Attendance Detail Page Specific Styles */
+        .detail-content {
+            padding: 35px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .detail-card {
+            background: var(--white);
+            border-radius: var(--radius-lg);
+            padding: 30px;
+            box-shadow: var(--shadow-md);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .detail-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--primary-gradient);
         }
 
         .detail-header {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             justify-content: space-between;
             flex-wrap: wrap;
+            gap: 25px;
+            margin-bottom: 30px;
+            padding-bottom: 25px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .session-info {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        .session-info-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--dark);
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
             gap: 10px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: var(--radius-md);
+            border: 1px solid #e2e8f0;
+        }
+
+        .info-item .info-icon {
+            font-size: 22px;
+        }
+
+        .info-item .info-content {
+            flex: 1;
+        }
+
+        .info-item .info-label {
+            font-size: 12px;
+            color: var(--gray);
+            margin-bottom: 2px;
+        }
+
+        .info-item .info-value {
+            font-weight: 700;
+            color: var(--dark);
+        }
+
+        .session-summary {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .summary-stat {
+            text-align: center;
+            padding: 20px 30px;
+            border-radius: var(--radius-lg);
+            min-width: 130px;
+        }
+
+        .summary-stat.present {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            border: 2px solid var(--success);
+        }
+
+        .summary-stat.absent {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+            border: 2px solid var(--danger);
+        }
+
+        .summary-stat.total {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border: 2px solid var(--primary-light);
+        }
+
+        .summary-stat .stat-value {
+            font-size: 32px;
+            font-weight: 800;
+            display: block;
+        }
+
+        .summary-stat.present .stat-value {
+            color: var(--success);
+        }
+
+        .summary-stat.absent .stat-value {
+            color: var(--danger);
+        }
+
+        .summary-stat.total .stat-value {
+            color: var(--primary);
+        }
+
+        .summary-stat .stat-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--dark);
+            margin-top: 5px;
         }
 
         .list-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-top: 15px;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 30px;
+            margin-top: 25px;
+        }
+
+        @media (max-width: 768px) {
+            .list-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .list-box {
             border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 15px;
-            background: #f8fafc;
-            min-height: 120px;
+            border-radius: var(--radius-lg);
+            background: var(--white);
+            overflow: hidden;
+        }
+
+        .list-box.present-box {
+            border-color: var(--success);
+        }
+
+        .list-box.absent-box {
+            border-color: var(--danger);
+        }
+
+        .list-header {
+            padding: 18px 22px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .present-box .list-header {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+        }
+
+        .absent-box .list-header {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
         }
 
         .list-title {
             font-weight: 700;
-            margin-bottom: 10px;
-        }
-
-        .name-item {
-            padding: 6px 0;
-            border-bottom: 1px dashed #e2e8f0;
-        }
-
-        .name-item:last-child {
-            border-bottom: none;
-        }
-
-        .present-item {
+            font-size: 16px;
             display: flex;
             align-items: center;
             gap: 10px;
-            padding: 6px 0;
-            border-bottom: 1px dashed #e2e8f0;
         }
 
-        .present-item:last-child {
-            border-bottom: none;
+        .present-box .list-title {
+            color: #059669;
         }
 
-        .present-item img {
-            width: 44px;
-            height: 44px;
-            border-radius: 8px;
-            object-fit: cover;
+        .absent-box .list-title {
+            color: #dc2626;
+        }
+
+        .list-count {
+            padding: 4px 12px;
+            border-radius: var(--radius-full);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .present-box .list-count {
+            background: var(--success);
+            color: white;
+        }
+
+        .absent-box .list-count {
+            background: var(--danger);
+            color: white;
+        }
+
+        .list-content {
+            max-height: 450px;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .student-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 15px;
+            border-radius: var(--radius-md);
+            margin-bottom: 10px;
+            transition: all var(--transition-fast);
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
             border: 1px solid #e2e8f0;
         }
 
-        .summary-line {
-            margin-top: 10px;
-            font-weight: 600;
+        .student-item:last-child {
+            margin-bottom: 0;
         }
 
-        
+        .student-item:hover {
+            transform: translateX(5px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .present-box .student-item:hover {
+            border-color: var(--success);
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+        }
+
+        .absent-box .student-item:hover {
+            border-color: var(--danger);
+            background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+        }
+
+        .student-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: var(--radius-md);
+            object-fit: cover;
+            border: 3px solid var(--white);
+            box-shadow: var(--shadow-sm);
+            flex-shrink: 0;
+        }
+
+        .student-avatar-placeholder {
+            width: 50px;
+            height: 50px;
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+
+        .student-info {
+            flex: 1;
+        }
+
+        .student-name {
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 14px;
+            margin-bottom: 3px;
+        }
+
+        .student-msv {
+            font-size: 12px;
+            color: var(--gray);
+        }
+
+        .student-index {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gray);
+            background: var(--white);
+            padding: 4px 10px;
+            border-radius: var(--radius-full);
+            border: 1px solid #e2e8f0;
+        }
+
+        .empty-list {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--gray);
+        }
+
+        .empty-list .empty-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .mode-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: var(--radius-full);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .mode-badge.mode-in {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            color: var(--success);
+            border: 2px solid var(--success);
+        }
+
+        .mode-badge.mode-out {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+            color: var(--danger);
+            border: 2px solid var(--danger);
+        }
     </style>
 </head>
 
 <body>
     <div class="dashboard-container">
+        <!-- Header -->
         <div class="dashboard-header">
-            <div>
-                <button class="btn btn-secondary" onclick="window.location.href='/dashboard'"
-                    style="width: auto; padding: 8px 20px;">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <button class="btn btn-outline" onclick="window.location.href='/dashboard'"
+                    style="padding: 10px 20px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: white;">
                     ← Quay lại
                 </button>
             </div>
-            <h1>Chi tiết điểm danh</h1>
+            <h1 style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 28px;">📊</span> Chi tiết điểm danh
+            </h1>
             <div class="user-info">
-                <span id="username">User</span>
+                <span id="username" style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">👤</span> {{ username }}
+                </span>
             </div>
         </div>
 
-        <div class="detail-section">
-            <div class="detail-header">
-                <div id="sessionInfo"></div>
-                <div id="sessionSummary"></div>
-            </div>
-
-            <div class="list-grid">
-                <div class="list-box">
-                    <div class="list-title">Có mặt</div>
-                    <div id="presentList"></div>
+        <!-- Main Content -->
+        <div class="detail-content">
+            <div class="detail-card">
+                <!-- Detail Header -->
+                <div class="detail-header">
+                    <div class="session-info">
+                        <div class="session-info-title">
+                            <span style="font-size: 24px;">📋</span>
+                            Thông tin phiên điểm danh
+                        </div>
+                        <div class="info-grid" id="sessionInfo">
+                            <!-- Session info will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="session-summary" id="sessionSummary">
+                        <!-- Summary stats will be loaded here -->
+                    </div>
                 </div>
-                <div class="list-box">
-                    <div class="list-title">Vắng</div>
-                    <div id="absentList"></div>
+
+                <!-- Lists Grid -->
+                <div class="list-grid">
+                    <!-- Present List -->
+                    <div class="list-box present-box">
+                        <div class="list-header">
+                            <div class="list-title">
+                                <span>✅</span> Có mặt
+                            </div>
+                            <span class="list-count" id="presentCount">0</span>
+                        </div>
+                        <div class="list-content" id="presentList">
+                            <!-- Present students will be loaded here -->
+                        </div>
+                    </div>
+
+                    <!-- Absent List -->
+                    <div class="list-box absent-box">
+                        <div class="list-header">
+                            <div class="list-title">
+                                <span>❌</span> Vắng mặt
+                            </div>
+                            <span class="list-count" id="absentCount">0</span>
+                        </div>
+                        <div class="list-content" id="absentList">
+                            <!-- Absent students will be loaded here -->
+                        </div>
+                    </div>
                 </div>
             </div>
+        </div>
 
+        <!-- Footer -->
+        <div style="text-align: center; padding: 20px; border-top: 1px solid #e2e8f0; background: #f8fafc;">
+            <p style="font-size: 12px; color: var(--gray); margin: 0;">
+                © 2024 Đại học Công nghiệp Hà Nội | Hệ thống điểm danh thông minh v2.0
+            </p>
         </div>
     </div>
 
     <script>
         const sessionId = "{{ session_id }}";
-        function renderNames(containerId, names) {
-            const container = document.getElementById(containerId);
-            if (!names || names.length === 0) {
-                container.innerHTML = '<div>Không có</div>';
-                return;
-            }
-            container.innerHTML = names.map(name => `<div class="name-item">${name}</div>`).join('');
-        }
 
         function renderPresent(containerId, faces) {
             const container = document.getElementById(containerId);
+            const countEl = document.getElementById('presentCount');
+            
             if (!faces || faces.length === 0) {
-                container.innerHTML = '<div>Không có</div>';
+                container.innerHTML = `
+                    <div class="empty-list">
+                        <span class="empty-icon">📭</span>
+                        <p>Không có sinh viên nào có mặt</p>
+                    </div>
+                `;
+                countEl.textContent = '0';
                 return;
             }
-            container.innerHTML = faces.map(face => {
-                const name = face.name || '';
+            
+            countEl.textContent = faces.length;
+            container.innerHTML = faces.map((face, index) => {
+                const name = face.name || 'Không xác định';
+                const msv = face.msv || '';
                 const image = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
-                const imageHtml = image ? `<img src="${image}" alt="${name}">` : '<div style="width:44px;height:44px;border-radius:8px;background:#e2e8f0;"></div>';
-                return `<div class="present-item">${imageHtml}<div>${name}</div></div>`;
+                const avatarHtml = image 
+                    ? `<img class="student-avatar" src="${image}" alt="${name}">`
+                    : `<div class="student-avatar-placeholder">👤</div>`;
+                const msvHtml = msv ? `<div class="student-msv">MSV: ${msv}</div>` : '';
+                
+                return `
+                    <div class="student-item">
+                        <span class="student-index">#${index + 1}</span>
+                        ${avatarHtml}
+                        <div class="student-info">
+                            <div class="student-name">${name}</div>
+                            ${msvHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderAbsent(containerId, names) {
+            const container = document.getElementById(containerId);
+            const countEl = document.getElementById('absentCount');
+            
+            if (!names || names.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-list">
+                        <span class="empty-icon">🎉</span>
+                        <p>Không có sinh viên nào vắng mặt</p>
+                    </div>
+                `;
+                countEl.textContent = '0';
+                return;
+            }
+            
+            countEl.textContent = names.length;
+            container.innerHTML = names.map((name, index) => {
+                return `
+                    <div class="student-item">
+                        <span class="student-index">#${index + 1}</span>
+                        <div class="student-avatar-placeholder">👤</div>
+                        <div class="student-info">
+                            <div class="student-name">${name}</div>
+                        </div>
+                    </div>
+                `;
             }).join('');
         }
 
@@ -148,34 +499,81 @@
                 .then(response => response.json())
                 .then(data => {
                     if (!data.success) {
-                        document.getElementById('sessionInfo').innerText = 'Không tải được dữ liệu';
+                        document.getElementById('sessionInfo').innerHTML = `
+                            <div class="empty-list">
+                                <span class="empty-icon">❌</span>
+                                <p>Không tải được dữ liệu</p>
+                            </div>
+                        `;
                         return;
                     }
 
                     const s = data.session;
                     const start = new Date(s.start_time);
                     const end = new Date(s.end_time);
-                    const startStr = isNaN(start.getTime()) ? '' : `${start.toLocaleDateString('vi-VN')} ${start.toLocaleTimeString('vi-VN')}`;
-                    const endStr = isNaN(end.getTime()) ? '' : `${end.toLocaleDateString('vi-VN')} ${end.toLocaleTimeString('vi-VN')}`;
-                    const modeText = s.attendance_type === 'out' ? 'RA' : 'VÀO';
+                    const startStr = isNaN(start.getTime()) ? 'N/A' : `${start.toLocaleDateString('vi-VN')} ${start.toLocaleTimeString('vi-VN')}`;
+                    const endStr = isNaN(end.getTime()) ? 'N/A' : `${end.toLocaleDateString('vi-VN')} ${end.toLocaleTimeString('vi-VN')}`;
+                    const modeClass = s.attendance_type === 'out' ? 'mode-out' : 'mode-in';
+                    const modeText = s.attendance_type === 'out' ? '🚪 RA' : '✅ VÀO';
 
                     document.getElementById('sessionInfo').innerHTML = `
-                        <div><strong>Lớp:</strong> ${s.class_name}</div>
-                        <div><strong>Chế độ:</strong> ${modeText}</div>
-                        <div><strong>Bắt đầu:</strong> ${startStr}</div>
-                        <div><strong>Kết thúc:</strong> ${endStr}</div>
+                        <div class="info-item">
+                            <span class="info-icon">📚</span>
+                            <div class="info-content">
+                                <div class="info-label">Lớp học</div>
+                                <div class="info-value">${s.class_name}</div>
+                            </div>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-icon">🎯</span>
+                            <div class="info-content">
+                                <div class="info-label">Chế độ</div>
+                                <div class="info-value">
+                                    <span class="mode-badge ${modeClass}">${modeText}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-icon">🕐</span>
+                            <div class="info-content">
+                                <div class="info-label">Bắt đầu</div>
+                                <div class="info-value">${startStr}</div>
+                            </div>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-icon">🕕</span>
+                            <div class="info-content">
+                                <div class="info-label">Kết thúc</div>
+                                <div class="info-value">${endStr}</div>
+                            </div>
+                        </div>
                     `;
+
                     document.getElementById('sessionSummary').innerHTML = `
-                        <div class="summary-line">Có mặt: ${s.present}/${s.total}</div>
-                        <div class="summary-line">Vắng: ${s.absent}/${s.total}</div>
+                        <div class="summary-stat present">
+                            <span class="stat-value">${s.present}</span>
+                            <span class="stat-label">Có mặt</span>
+                        </div>
+                        <div class="summary-stat absent">
+                            <span class="stat-value">${s.absent}</span>
+                            <span class="stat-label">Vắng mặt</span>
+                        </div>
+                        <div class="summary-stat total">
+                            <span class="stat-value">${s.total}</span>
+                            <span class="stat-label">Tổng số</span>
+                        </div>
                     `;
 
                     renderPresent('presentList', data.present_faces || []);
-                    renderNames('absentList', data.absent_names);
-                    
+                    renderAbsent('absentList', data.absent_names || []);
                 })
                 .catch(() => {
-                    document.getElementById('sessionInfo').innerText = 'Không tải được dữ liệu';
+                    document.getElementById('sessionInfo').innerHTML = `
+                        <div class="empty-list">
+                            <span class="empty-icon">❌</span>
+                            <p>Lỗi kết nối - Không tải được dữ liệu</p>
+                        </div>
+                    `;
                 });
         }
 

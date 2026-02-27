@@ -1,8 +1,10 @@
+import os
 import cv2
 import threading
 import time
 import numpy as np
 import base64
+from datetime import datetime
 from services.face_recognition_service import face_service
 from services.database_service import db_service
 
@@ -30,7 +32,6 @@ class RTSPService:
             self.user_id = user_id
             self.attendance_type = attendance_type
             self.attendance_recorded_today = set()  # Reset attendance tracking
-            from datetime import datetime
             self.session_start_time = datetime.now()
             
             # Check if we should use webcam (rtsp_url is "0" or empty)
@@ -76,7 +77,6 @@ class RTSPService:
     def stop_stream(self):
         """Stop RTSP stream"""
         if self.class_name and self.user_id and self.session_start_time:
-            from datetime import datetime
             end_time = datetime.now()
             present_faces_map = {}
             for face_data in self.recognized_faces_dict.values():
@@ -171,8 +171,7 @@ class RTSPService:
                 # Keep previous results, don't clear
                 return
             
-            # Get known faces from database
-            known_faces = db_service.get_all_faces()
+            known_faces = db_service.get_faces_by_class(self.class_name) if self.class_name else []
             
             # Track new recognitions
             new_recognitions = {}
@@ -221,7 +220,7 @@ class RTSPService:
                             db_image_base64 = None
                             if face_info and face_info.get('image_path'):
                                 try:
-                                    import os
+
                                     img_path = face_info['image_path']
                                     if not os.path.isabs(img_path):
                                         img_path = os.path.join(os.getcwd(), img_path)
@@ -239,7 +238,7 @@ class RTSPService:
                                 class_name_for_face == self.class_name and
                                 attendance_key not in self.attendance_recorded_today):
                                 
-                                from datetime import datetime
+
                                 attendance_id = db_service.create_attendance(
                                     name, 
                                     self.class_name, 
@@ -296,16 +295,18 @@ class RTSPService:
     def get_session_summary(self):
         if not self.class_name:
             return {'present': 0, 'absent': 0, 'total': 0}
-        student_names = db_service.get_class_students(self.class_name)
-        normalized_students = {db_service._normalize_name(name) for name in student_names if name}
-        present_normalized = set()
+        students = db_service.get_faces_by_class(self.class_name)
+        student_msvs = {f.get('msv') for f in students if f.get('msv')}
+        
+        present_msvs = set()
         for face_data in self.recognized_faces_dict.values():
-            name = face_data.get('name')
+            msv = face_data.get('msv')
             class_name_for_face = face_data.get('class_name') or self.class_name
-            if name and class_name_for_face == self.class_name:
-                present_normalized.add(db_service._normalize_name(name))
-        present = len(present_normalized & normalized_students)
-        total = len(normalized_students)
+            if msv and class_name_for_face == self.class_name:
+                present_msvs.add(msv)
+        
+        present = len(present_msvs & student_msvs)
+        total = len(student_msvs)
         absent = total - present
         if absent < 0:
             absent = 0

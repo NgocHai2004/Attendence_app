@@ -10,9 +10,7 @@ import io
 from pathlib import Path
 import json
 
-from services.database_service import db_service
-from services.face_recognition_service import face_service
-from services.rtsp_service import rtsp_service
+from services import db_service, face_service, rtsp_service, scheduler
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
@@ -44,28 +42,28 @@ def register_page():
 def attendance_session_page(session_id):
     if 'user_id' not in session:
         return render_template('login.html')
-    return render_template('attendance_detail.html', session_id=session_id)
+    return render_template('attendance_detail.html', session_id=session_id, username=session.get('username', 'User'))
 
 @app.route('/dashboard')
 def dashboard():
     """Dashboard page"""
     if 'user_id' not in session:
         return render_template('login.html')
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', username=session.get('username', 'User'))
 
 @app.route('/register-face')
 def register_face_page():
     """Face registration page"""
     if 'user_id' not in session:
         return render_template('login.html')
-    return render_template('register_face.html')
+    return render_template('register_face.html', username=session.get('username', 'User'))
 
 @app.route('/recognition')
 def recognition_page():
     """RTSP recognition page"""
     if 'user_id' not in session:
         return render_template('login.html')
-    return render_template('recognition.html')
+    return render_template('recognition.html', username=session.get('username', 'User'))
 
 # API Routes
 @app.route('/api/register', methods=['POST'])
@@ -320,6 +318,7 @@ def api_get_attendance():
 @app.route('/api/attendance-summary', methods=['GET'])
 def api_get_attendance_summary():
     """Get attendance summary by class"""
+    global browser_recognized_faces, browser_session_start
     try:
         if 'user_id' not in session:
             return jsonify({'success': False, 'message': 'Not authenticated'}), 401
@@ -331,7 +330,10 @@ def api_get_attendance_summary():
             return jsonify({'success': False, 'message': 'Class name is required'}), 400
         
         use_session = request.args.get('session') == '1'
-        if use_session and rtsp_service.is_running and rtsp_service.session_start_time:
+        
+        if use_session and browser_session_start:
+            summary = get_browser_session_summary(class_name)
+        elif use_session and rtsp_service.is_running and rtsp_service.session_start_time:
             if class_name == rtsp_service.class_name and attendance_type == rtsp_service.attendance_type:
                 summary = rtsp_service.get_session_summary()
             else:
@@ -342,6 +344,24 @@ def api_get_attendance_summary():
         
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+def get_browser_session_summary(class_name):
+    global browser_recognized_faces
+    students = db_service.get_faces_by_class(class_name)
+    student_msvs = {f.get('msv') for f in students if f.get('msv')}
+    
+    present_msvs = set()
+    for face_data in browser_recognized_faces.values():
+        msv = face_data.get('msv')
+        if msv:
+            present_msvs.add(msv)
+    
+    present = len(present_msvs & student_msvs)
+    total = len(student_msvs)
+    absent = total - present
+    if absent < 0:
+        absent = 0
+    return {'present': present, 'absent': absent, 'total': total}
 
 @app.route('/api/attendance-sessions', methods=['GET'])
 def api_get_attendance_sessions():
@@ -457,15 +477,29 @@ def api_get_attendance_session_detail():
             if existing is None or record.get('timestamp') > existing.get('timestamp'):
                 present_map[normalized] = record
 
+        all_faces = db_service.get_faces_by_class(class_name)
+        face_msv_map = {db_service._normalize_name(f.get('name')): f.get('msv') for f in all_faces if f.get('name')}
+        
         present_faces = []
         if present_map:
             for record in present_map.values():
+                name = record.get('name')
+                normalized = db_service._normalize_name(name)
                 present_faces.append({
-                    'name': record.get('name'),
+                    'name': name,
+                    'msv': face_msv_map.get(normalized, ''),
                     'face_image': record.get('face_image')
                 })
         elif session_record.get('present_faces'):
-            present_faces = session_record.get('present_faces', [])
+            pf = session_record.get('present_faces', [])
+            for face in pf:
+                name = face.get('name')
+                normalized = db_service._normalize_name(name)
+                present_faces.append({
+                    'name': name,
+                    'msv': face_msv_map.get(normalized, ''),
+                    'face_image': face.get('face_image')
+                })
 
         all_students = db_service.get_class_students(class_name)
         present_normalized = {db_service._normalize_name(face.get('name')) for face in present_faces if face.get('name')}
@@ -624,6 +658,222 @@ def api_recognized_faces():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+browser_recognized_faces = {}
+browser_session_start = None
+
+@app.route('/api/browser-session/start', methods=['POST'])
+def api_browser_session_start():
+    """Start browser camera session"""
+    global browser_recognized_faces, browser_session_start
+    browser_recognized_faces = {}
+    browser_session_start = datetime.now()
+    return jsonify({'success': True})
+
+@app.route('/api/browser-session/stop', methods=['POST'])
+def api_browser_session_stop():
+    """Stop browser camera session and save attendance"""
+    global browser_recognized_faces, browser_session_start
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        data = request.get_json() or {}
+        class_name = data.get('class_name')
+        attendance_type = data.get('attendance_type', 'in')
+
+        if class_name and browser_session_start:
+            end_time = datetime.now()
+            present_faces = []
+            for face_data in browser_recognized_faces.values():
+                present_faces.append({
+                    'name': face_data.get('name'),
+                    'face_image': face_data.get('face_image')
+                })
+
+            summary = db_service.get_attendance_summary_in_range(
+                class_name, attendance_type, browser_session_start, end_time
+            )
+            db_service.create_attendance_session(
+                class_name, attendance_type, session['user_id'],
+                browser_session_start, end_time,
+                summary.get('present', 0), summary.get('total', 0),
+                summary.get('absent', 0), present_faces=present_faces
+            )
+
+        browser_recognized_faces = {}
+        browser_session_start = None
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/recognize-frame', methods=['POST'])
+def api_recognize_frame():
+    """Recognize faces from browser camera frame"""
+    global browser_recognized_faces
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        data = request.get_json()
+        image_data = data.get('image')
+        class_name = data.get('class_name')
+        attendance_type = data.get('attendance_type', 'in')
+
+        if not image_data or ',' not in image_data:
+            return jsonify({'success': False, 'message': 'Invalid image'}), 400
+
+        image_bytes = base64.b64decode(image_data.split(',')[1])
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
+
+        faces = face_service.detect_faces(frame)
+        if not faces:
+            return jsonify({'success': True, 'faces': list(browser_recognized_faces.values())})
+
+        known_faces = db_service.get_faces_by_class(class_name) if class_name else []
+        new_recognitions = []
+
+        for face_box in faces:
+            encoding = face_service.extract_face_encoding(frame, face_box)
+            if encoding is None:
+                continue
+
+            match, confidence = face_service.identify_face(encoding, known_faces)
+            name = match.get('name') if match else None
+            msv = match.get('msv') if match else None
+
+            if match and confidence < 70.0:
+                continue
+
+            x, y, w, h = face_box
+            face_crop = frame[y:y+h, x:x+w]
+            face_image_base64 = None
+            if face_crop.size > 0:
+                _, buffer = cv2.imencode('.jpg', face_crop)
+                face_image_base64 = base64.b64encode(buffer).decode('utf-8')
+
+            db_image_base64 = None
+            if match and match.get('image_path'):
+                img_path = match['image_path']
+                if not os.path.isabs(img_path):
+                    img_path = os.path.join(os.getcwd(), img_path)
+                if os.path.exists(img_path):
+                    db_img = cv2.imread(img_path)
+                    if db_img is not None:
+                        _, db_buffer = cv2.imencode('.jpg', db_img)
+                        db_image_base64 = base64.b64encode(db_buffer).decode('utf-8')
+
+            if name:
+                person_key = msv or name
+                normalized_name = db_service._normalize_name(name)
+                
+                if person_key not in browser_recognized_faces:
+                    db_service.create_attendance(
+                        name, class_name, session['user_id'], attendance_type,
+                        attendance_time=datetime.now(), allow_duplicate=True,
+                        face_image=face_image_base64
+                    )
+
+                browser_recognized_faces[person_key] = {
+                    'name': name,
+                    'msv': msv,
+                    'confidence': round(confidence, 2),
+                    'class_name': class_name,
+                    'attendance_type': attendance_type,
+                    'box': {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)},
+                    'face_image': face_image_base64,
+                    'db_image': db_image_base64
+                }
+
+        return jsonify({'success': True, 'faces': list(browser_recognized_faces.values())})
+
+    except Exception as e:
+        print(f"Error in recognize-frame: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# Schedule API endpoints
+@app.route('/api/schedules', methods=['POST'])
+def api_create_schedule():
+    """Create a new attendance schedule"""
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        data = request.get_json()
+        class_name = data.get('class_name')
+        attendance_type = data.get('attendance_type', 'in')
+        rtsp_url = data.get('rtsp_url', '0')
+        start_hour = data.get('start_hour')
+        start_minute = data.get('start_minute', 0)
+        duration_minutes = data.get('duration_minutes', 15)
+        total_days = data.get('total_days', 1)
+
+        if not class_name:
+            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+        if start_hour is None:
+            return jsonify({'success': False, 'message': 'Start hour is required'}), 400
+
+        schedule_id = db_service.create_schedule(
+            class_name, attendance_type, rtsp_url,
+            int(start_hour), int(start_minute),
+            int(duration_minutes), int(total_days),
+            session['user_id']
+        )
+
+        if schedule_id:
+            return jsonify({'success': True, 'schedule_id': schedule_id})
+        return jsonify({'success': False, 'message': 'Failed to create schedule'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedules', methods=['GET'])
+def api_get_schedules():
+    """Get schedules for a class"""
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        class_name = request.args.get('class_name')
+        if not class_name:
+            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+
+        schedules = db_service.get_schedules_by_class(class_name)
+        scheduler_status = scheduler.get_status()
+        return jsonify({'success': True, 'schedules': schedules, 'scheduler': scheduler_status})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedules/<schedule_id>/toggle', methods=['PUT'])
+def api_toggle_schedule(schedule_id):
+    """Toggle schedule active status"""
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        result = db_service.toggle_schedule(schedule_id)
+        if result is None:
+            return jsonify({'success': False, 'message': 'Schedule not found'}), 404
+        return jsonify({'success': True, 'active': result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedules/<schedule_id>', methods=['DELETE'])
+def api_delete_schedule(schedule_id):
+    """Delete a schedule"""
+    try:
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+
+        deleted = db_service.delete_schedule(schedule_id)
+        if deleted:
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'message': 'Delete failed'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 if __name__ == '__main__':
     print("\n" + "="*50)
     print("Face Recognition Attendance System")
@@ -631,5 +881,8 @@ if __name__ == '__main__':
     print("\nStarting Flask application...")
     print("Access the application at: http://localhost:5000")
     print("\nPress Ctrl+C to stop the server\n")
+    
+    # Start the scheduler
+    scheduler.start()
     
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
