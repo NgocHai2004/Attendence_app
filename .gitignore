@@ -4,4 +4,4 @@ __pycache__/
 *.pyc
 uploads/
 model_insight/
-face_det/
+facedet/
