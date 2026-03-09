@@ -272,6 +272,26 @@
             flex-shrink: 0;
         }
 
+        .student-avatars {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .student-avatars .student-avatar {
+            width: 45px;
+            height: 45px;
+            position: relative;
+        }
+
+        .student-avatars .student-avatar:first-child {
+            border-color: #10b981;
+        }
+
+        .student-avatars .student-avatar:last-child {
+            border-color: #3b82f6;
+        }
+
         .student-avatar-placeholder {
             width: 50px;
             height: 50px;
@@ -446,10 +466,26 @@
             container.innerHTML = faces.map((face, index) => {
                 const name = face.name || 'Không xác định';
                 const msv = face.msv || '';
-                const image = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
-                const avatarHtml = image 
-                    ? `<img class="student-avatar" src="${image}" alt="${name}">`
-                    : `<div class="student-avatar-placeholder">👤</div>`;
+                const faceImage = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
+                const dbImage = face.db_image ? `data:image/jpeg;base64,${face.db_image}` : '';
+                
+                // Show attendance image (face_image) first, then registered image (db_image)
+                let avatarHtml = '';
+                if (faceImage && dbImage) {
+                    avatarHtml = `
+                        <div class="student-avatars">
+                            <img class="student-avatar" src="${faceImage}" alt="${name}" title="Ảnh điểm danh">
+                            <img class="student-avatar student-avatar-db" src="${dbImage}" alt="${name}" title="Ảnh đăng ký">
+                        </div>
+                    `;
+                } else if (faceImage) {
+                    avatarHtml = `<img class="student-avatar" src="${faceImage}" alt="${name}" title="Ảnh điểm danh">`;
+                } else if (dbImage) {
+                    avatarHtml = `<img class="student-avatar" src="${dbImage}" alt="${name}" title="Ảnh đăng ký">`;
+                } else {
+                    avatarHtml = `<div class="student-avatar-placeholder">👤</div>`;
+                }
+                
                 const msvHtml = msv ? `<div class="student-msv">MSV: ${msv}</div>` : '';
                 
                 return `
@@ -465,11 +501,11 @@
             }).join('');
         }
 
-        function renderAbsent(containerId, names) {
+        function renderAbsent(containerId, faces) {
             const container = document.getElementById(containerId);
             const countEl = document.getElementById('absentCount');
             
-            if (!names || names.length === 0) {
+            if (!faces || faces.length === 0) {
                 container.innerHTML = `
                     <div class="empty-list">
                         <span class="empty-icon">🎉</span>
@@ -480,14 +516,24 @@
                 return;
             }
             
-            countEl.textContent = names.length;
-            container.innerHTML = names.map((name, index) => {
+            countEl.textContent = faces.length;
+            container.innerHTML = faces.map((face, index) => {
+                const name = face.name || 'Unknown';
+                const msv = face.msv || '';
+                const image = face.face_image ? `data:image/jpeg;base64,${face.face_image}` : '';
+                
+                const avatarHtml = image
+                    ? `<img class="student-avatar" src="${image}" alt="${name}">`
+                    : `<div class="student-avatar-placeholder">👤</div>`;
+                const msvHtml = msv ? `<div class="student-msv">MSV: ${msv}</div>` : '';
+                
                 return `
                     <div class="student-item">
                         <span class="student-index">#${index + 1}</span>
-                        <div class="student-avatar-placeholder">👤</div>
+                        ${avatarHtml}
                         <div class="student-info">
                             <div class="student-name">${name}</div>
+                            ${msvHtml}
                         </div>
                     </div>
                 `;
@@ -565,7 +611,7 @@
                     `;
 
                     renderPresent('presentList', data.present_faces || []);
-                    renderAbsent('absentList', data.absent_names || []);
+                    renderAbsent('absentList', data.absent_faces || []);
                 })
                 .catch(() => {
                     document.getElementById('sessionInfo').innerHTML = `

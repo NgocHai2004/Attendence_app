@@ -22,7 +22,6 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/
       - DATABASE_NAME=attendance_app
       - SECRET_KEY=your-secret-key-change-this-in-production
-      - FLASK_ENV=development
     volumes:
       - ./uploads:/app/uploads
       - ./model_insight:/app/model_insight

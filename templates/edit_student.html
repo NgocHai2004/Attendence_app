@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sửa thông tin sinh viên - Hệ thống điểm danh HAUI</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" type="image/png" href="/static/css/brand.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #f0f2f5 0%, #e2e8f0 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .edit-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .edit-header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .edit-header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+        }
+
+        .edit-header p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin: 0;
+        }
+
+        .edit-body {
+            padding: 40px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .form-group label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .form-group input {
+            padding: 14px 18px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            color: #1f2937;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+        }
+
+        .form-group input:disabled {
+            background: #f3f4f6;
+            color: #9ca3af;
+        }
+
+        .image-preview {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .current-image {
+            width: 200px;
+            height: 200px;
+            border-radius: 16px;
+            object-fit: cover;
+            border: 4px solid #e5e7eb;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        #imageSection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .image-placeholder {
+            width: 200px;
+            height: 200px;
+            border-radius: 16px;
+            background: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 64px;
+            margin-bottom: 0;
+            border: 4px dashed #d1d5db;
+        }
+
+        .image-upload-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+        }
+
+        .image-upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .camera-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            margin-left: 10px;
+        }
+
+        .camera-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .camera-video {
+            width: 100%;
+            border-radius: 16px;
+            border: 4px solid #3b82f6;
+        }
+
+        .camera-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+
+        .capture-btn {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .capture-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+
+        .cancel-camera-btn {
+            padding: 14px 28px;
+            background: #6b7280;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .cancel-camera-btn:hover {
+            background: #4b5563;
+        }
+
+        .image-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .btn {
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+            border: 2px solid #e5e7eb;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #6b7280;
+        }
+
+        .loading-spinner {
+            font-size: 48px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="edit-container">
+        <div class="edit-header">
+            <h1>✏️ Sửa thông tin sinh viên</h1>
+            <p>Cập nhật tên, MSV và ảnh khuôn mặt</p>
+        </div>
+
+        <div class="edit-body">
+            <div id="alertContainer"></div>
+
+            <div id="loadingState" class="loading">
+                <span class="loading-spinner">⏳</span>
+                <p>Đang tải thông tin...</p>
+            </div>
+
+            <form id="editForm" style="display: none;">
+                <div class="form-row">
+                    <div class="form-group full-width image-preview">
+                        <!-- Image/Camera Display -->
+                        <div id="imageSection">
+                            <div id="imagePlaceholder" class="image-placeholder">👤</div>
+                            <img id="currentImage" class="current-image" style="display: none;" alt="Ảnh sinh viên">
+                        </div>
+                        
+                        <!-- Camera Section (hidden by default) -->
+                        <div id="cameraSection" class="camera-container" style="display: none;">
+                            <video id="cameraVideo" class="camera-video" autoplay playsinline></video>
+                            <canvas id="cameraCanvas" style="display: none;"></canvas>
+                            <div class="camera-controls">
+                                <button type="button" class="capture-btn" onclick="capturePhoto()">
+                                    📸 Chụp ảnh
+                                </button>
+                                <button type="button" class="cancel-camera-btn" onclick="stopCamera()">
+                                    ✕ Hủy
+                                </button>
+                            </div>
+                        </div>
+
+                        <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                        <div class="image-buttons">
+                            <button type="button" class="image-upload-btn" onclick="document.getElementById('imageInput').click()">
+                                📁 Tải ảnh lên
+                            </button>
+                            <button type="button" class="camera-btn" onclick="startCamera()">
+                                📷 Chụp từ camera
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="msv">📋 Mã sinh viên (MSV)</label>
+                        <input type="text" id="msv" required placeholder="Nhập mã sinh viên">
+                    </div>
+                    <div class="form-group">
+                        <label for="name">👤 Họ và tên</label>
+                        <input type="text" id="name" required placeholder="Nhập họ và tên">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="className">📚 Lớp</label>
+                        <input type="text" id="className" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label for="createdAt">📅 Ngày tạo</label>
+                        <input type="text" id="createdAt" disabled>
+                    </div>
+                </div>
+
+                <input type="hidden" id="studentId">
+                <input type="hidden" id="newImageData">
+
+                <div class="btn-group">
+                    <button type="button" class="btn btn-secondary" onclick="goBack()">
+                        ← Quay lại
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        💾 Lưu thay đổi
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const studentId = urlParams.get('id');
+        const className = urlParams.get('class_name');
+
+        function showAlert(message, type) {
+            const container = document.getElementById('alertContainer');
+            container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => container.innerHTML = '', 5000);
+        }
+
+        function goBack() {
+            window.history.back();
+        }
+
+        function loadStudentInfo() {
+            if (!studentId) {
+                showAlert('❌ Không tìm thấy ID sinh viên', 'error');
+                return;
+            }
+
+            fetch(`/api/student/${studentId}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loadingState').style.display = 'none';
+                    document.getElementById('editForm').style.display = 'block';
+
+                    if (!data.success) {
+                        showAlert(data.message || '❌ Không tải được thông tin', 'error');
+                        return;
+                    }
+
+                    const student = data.student;
+                    document.getElementById('studentId').value = student.id;
+                    document.getElementById('msv').value = student.msv || '';
+                    document.getElementById('name').value = student.name || '';
+                    document.getElementById('className').value = student.class_name || '';
+                    document.getElementById('createdAt').value = student.created_at ? new Date(student.created_at).toLocaleString('vi-VN') : '';
+
+                    if (student.image_path) {
+                        const img = document.getElementById('currentImage');
+                        // Add timestamp to prevent caching
+                        img.src = `/api/student-image/${studentId}?t=${Date.now()}`;
+                        img.style.display = 'block';
+                        document.getElementById('imagePlaceholder').style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('loadingState').innerHTML = '<p>❌ Lỗi tải thông tin</p>';
+                });
+        }
+
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = document.getElementById('currentImage');
+                img.src = event.target.result;
+                img.style.display = 'block';
+                document.getElementById('imagePlaceholder').style.display = 'none';
+                document.getElementById('newImageData').value = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        document.getElementById('editForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const data = {
+                id: document.getElementById('studentId').value,
+                name: document.getElementById('name').value.trim(),
+                msv: document.getElementById('msv').value.trim(),
+                image: document.getElementById('newImageData').value || null
+            };
+
+            if (!data.name || !data.msv) {
+                showAlert('⚠️ Vui lòng nhập đầy đủ thông tin', 'error');
+                return;
+            }
+
+            fetch('/api/student/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    showAlert('✅ Cập nhật thành công!', 'success');
+                    // Clear the new image data after successful update
+                    document.getElementById('newImageData').value = '';
+                    // Reload student info to show updated data
+                    loadStudentInfo();
+                    // Go back after a short delay
+                    setTimeout(() => goBack(), 1500);
+                } else {
+                    showAlert(result.message || '❌ Cập nhật thất bại', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showAlert('❌ Lỗi kết nối', 'error');
+            });
+        });
+
+        // Camera variables
+        let cameraStream = null;
+
+        function startCamera() {
+            const video = document.getElementById('cameraVideo');
+            const cameraSection = document.getElementById('cameraSection');
+            const imageSection = document.getElementById('imageSection');
+            const imageButtons = document.querySelector('.image-buttons');
+
+            navigator.mediaDevices.getUserMedia({
+                video: {
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    facingMode: 'user'
+                }
+            })
+            .then(stream => {
+                cameraStream = stream;
+                video.srcObject = stream;
+                imageSection.style.display = 'none';
+                imageButtons.style.display = 'none';
+                cameraSection.style.display = 'block';
+            })
+            .catch(err => {
+                console.error('Camera error:', err);
+                showAlert('❌ Không thể truy cập camera. Vui lòng cấp quyền camera.', 'error');
+            });
+        }
+
+        function stopCamera() {
+            const video = document.getElementById('cameraVideo');
+            const cameraSection = document.getElementById('cameraSection');
+            const imageSection = document.getElementById('imageSection');
+            const imageButtons = document.querySelector('.image-buttons');
+
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            video.srcObject = null;
+            cameraSection.style.display = 'none';
+            imageSection.style.display = 'block';
+            imageButtons.style.display = 'flex';
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('cameraVideo');
+            const canvas = document.getElementById('cameraCanvas');
+            const img = document.getElementById('currentImage');
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+
+            const imageData = canvas.toDataURL('image/jpeg', 0.9);
+            
+            // Set captured image
+            img.src = imageData;
+            img.style.display = 'block';
+            document.getElementById('imagePlaceholder').style.display = 'none';
+            document.getElementById('newImageData').value = imageData;
+
+            // Stop camera and show image
+            stopCamera();
+            showAlert('✅ Đã chụp ảnh thành công!', 'success');
+        }
+
+        // Initialize
+        loadStudentInfo();
+    </script>
+</body>
+
+</html>

@@ -1,349 +1,569 @@
-from flask import Flask, request, jsonify, render_template, Response, session
-from flask_cors import CORS
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, Form, File, UploadFile, Query
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 import os
 import cv2
 import numpy as np
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import csv
 import io
 from pathlib import Path
 import json
+from typing import Optional, List
+from pydantic import BaseModel
 
 from services import db_service, face_service, rtsp_service, scheduler
 
-app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
-CORS(app)
+app = FastAPI(title="Face Recognition Attendance System")
+
+# Add session middleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv('SECRET_KEY', 'your-secret-key-change-this')
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Templates
+templates = Jinja2Templates(directory="templates")
 
 # Create upload directory
 UPLOAD_FOLDER = Path('uploads')
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
-# Routes
-@app.route('/')
-def index():
+# Pydantic models for request bodies
+class RegisterUserRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RegisterFaceCameraRequest(BaseModel):
+    name: str
+    msv: str
+    image: str
+    class_name: str
+
+class CreateClassRequest(BaseModel):
+    class_name: str
+
+class RenameClassRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+class DeleteSessionsRequest(BaseModel):
+    session_ids: List[str]
+
+class UpdateStudentRequest(BaseModel):
+    id: str
+    name: str
+    msv: str
+    image: Optional[str] = None
+
+class UpdateStudentNameRequest(BaseModel):
+    name: str
+
+class StartRTSPRequest(BaseModel):
+    rtsp_url: str
+    class_name: Optional[str] = None
+    attendance_type: str = 'in'
+
+class BrowserSessionStopRequest(BaseModel):
+    class_name: Optional[str] = None
+    attendance_type: str = 'in'
+
+class RecognizeFrameRequest(BaseModel):
+    image: str
+    class_name: Optional[str] = None
+    attendance_type: str = 'in'
+
+class CreateScheduleRequest(BaseModel):
+    class_name: str
+    attendance_type: str = 'in'
+    rtsp_url: str = '0'
+    start_hour: int
+    start_minute: int = 0
+    duration_minutes: int = 15
+    total_days: int = 1
+
+# Pydantic models for user management
+class CreateUserRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: str = 'user'
+
+class UpdateUserRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class UpdateUserPasswordRequest(BaseModel):
+    password: str
+
+# Helper function to get session
+def get_session(request: Request):
+    return request.session
+
+def require_auth(request: Request):
+    if 'user_id' not in request.session:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    return request.session
+
+def require_admin(request: Request):
+    """Require admin role for access"""
+    if 'user_id' not in request.session:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    
+    user = db_service.get_user_by_id(request.session['user_id'])
+    if not user or user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin access required')
+    return request.session
+
+# Page Routes
+@app.get('/', response_class=HTMLResponse)
+async def index(request: Request):
     """Redirect to login page"""
-    if 'user_id' in session:
-        return render_template('dashboard.html')
-    return render_template('login.html')
+    if 'user_id' in request.session:
+        return templates.TemplateResponse('dashboard.html', {'request': request})
+    return templates.TemplateResponse('login.html', {'request': request})
 
-@app.route('/login')
-def login_page():
+@app.get('/login', response_class=HTMLResponse)
+async def login_page(request: Request):
     """Login page"""
-    return render_template('login.html')
+    return templates.TemplateResponse('login.html', {'request': request})
 
-@app.route('/register')
-def register_page():
+@app.get('/register', response_class=HTMLResponse)
+async def register_page(request: Request):
     """Registration page"""
-    return render_template('register.html')
+    return templates.TemplateResponse('register.html', {'request': request})
 
-@app.route('/attendance-session/<session_id>')
-def attendance_session_page(session_id):
-    if 'user_id' not in session:
-        return render_template('login.html')
-    return render_template('attendance_detail.html', session_id=session_id, username=session.get('username', 'User'))
+@app.get('/attendance-session/{session_id}', response_class=HTMLResponse)
+async def attendance_session_page(request: Request, session_id: str):
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    return templates.TemplateResponse('attendance_detail.html', {
+        'request': request,
+        'session_id': session_id,
+        'username': request.session.get('username', 'User')
+    })
 
-@app.route('/dashboard')
-def dashboard():
+@app.get('/dashboard', response_class=HTMLResponse)
+async def dashboard(request: Request):
     """Dashboard page"""
-    if 'user_id' not in session:
-        return render_template('login.html')
-    return render_template('dashboard.html', username=session.get('username', 'User'))
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    return templates.TemplateResponse('dashboard.html', {
+        'request': request,
+        'username': request.session.get('username', 'User')
+    })
 
-@app.route('/register-face')
-def register_face_page():
+@app.get('/register-face', response_class=HTMLResponse)
+async def register_face_page(request: Request):
     """Face registration page"""
-    if 'user_id' not in session:
-        return render_template('login.html')
-    return render_template('register_face.html', username=session.get('username', 'User'))
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    return templates.TemplateResponse('register_face.html', {
+        'request': request,
+        'username': request.session.get('username', 'User')
+    })
 
-@app.route('/recognition')
-def recognition_page():
+@app.get('/recognition', response_class=HTMLResponse)
+async def recognition_page(request: Request):
     """RTSP recognition page"""
-    if 'user_id' not in session:
-        return render_template('login.html')
-    return render_template('recognition.html', username=session.get('username', 'User'))
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    return templates.TemplateResponse('recognition.html', {
+        'request': request,
+        'username': request.session.get('username', 'User')
+    })
+
+@app.get('/edit-student', response_class=HTMLResponse)
+async def edit_student_page(request: Request):
+    """Edit student page"""
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    return templates.TemplateResponse('edit_student.html', {'request': request})
+
+@app.get('/user-management', response_class=HTMLResponse)
+async def user_management_page(request: Request):
+    """User management page (Admin only)"""
+    if 'user_id' not in request.session:
+        return templates.TemplateResponse('login.html', {'request': request})
+    
+    # Check if user is admin
+    user = db_service.get_user_by_id(request.session['user_id'])
+    if not user or user.get('role') != 'admin':
+        return templates.TemplateResponse('dashboard.html', {
+            'request': request,
+            'username': request.session.get('username', 'User'),
+            'error': 'Bạn không có quyền truy cập trang này'
+        })
+    
+    return templates.TemplateResponse('user_management.html', {
+        'request': request,
+        'username': request.session.get('username', 'User'),
+        'role': user.get('role', 'user')
+    })
 
 # API Routes
-@app.route('/api/register', methods=['POST'])
-def api_register():
+@app.post('/api/register')
+async def api_register(data: RegisterUserRequest):
     """Register a new user"""
     try:
-        data = request.get_json()
-        username = data.get('username')
-        email = data.get('email')
-        password = data.get('password')
+        username = data.username
+        email = data.email
+        password = data.password
         
         if not all([username, email, password]):
-            return jsonify({'success': False, 'message': 'Missing required fields'}), 400
+            return JSONResponse({'success': False, 'message': 'Missing required fields'}, status_code=400)
         
         # Check if user exists
         if db_service.get_user_by_email(email):
-            return jsonify({'success': False, 'message': 'Email already registered'}), 400
+            return JSONResponse({'success': False, 'message': 'Email already registered'}, status_code=400)
         
         if db_service.get_user_by_username(username):
-            return jsonify({'success': False, 'message': 'Username already taken'}), 400
+            return JSONResponse({'success': False, 'message': 'Username already taken'}, status_code=400)
         
         # Create user
         user_id = db_service.create_user(username, email, password)
         
         if user_id:
-            return jsonify({'success': True, 'message': 'User registered successfully', 'user_id': user_id})
+            return {'success': True, 'message': 'User registered successfully', 'user_id': user_id}
         else:
-            return jsonify({'success': False, 'message': 'Failed to create user'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to create user'}, status_code=500)
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/login', methods=['POST'])
-def api_login():
+@app.post('/api/login')
+async def api_login(request: Request, data: LoginRequest):
     """Login user"""
     try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
+        email = data.email
+        password = data.password
         
         if not all([email, password]):
-            return jsonify({'success': False, 'message': 'Missing email or password'}), 400
+            return JSONResponse({'success': False, 'message': 'Missing email or password'}, status_code=400)
         
         # Get user
         user = db_service.get_user_by_email(email)
         
         if not user:
-            return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
+            return JSONResponse({'success': False, 'message': 'Invalid email or password'}, status_code=401)
+        
+        # Check if user is active
+        if not user.get('is_active', True):
+            return JSONResponse({'success': False, 'message': 'Tài khoản đã bị vô hiệu hóa'}, status_code=401)
         
         # Verify password
         if not db_service.verify_password(password, user['password']):
-            return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
+            return JSONResponse({'success': False, 'message': 'Invalid email or password'}, status_code=401)
         
         # Set session
-        session['user_id'] = str(user['_id'])
-        session['username'] = user['username']
+        request.session['user_id'] = str(user['_id'])
+        request.session['username'] = user['username']
+        request.session['role'] = user.get('role', 'user')
         
-        return jsonify({
-            'success': True, 
+        return {
+            'success': True,
             'message': 'Login successful',
             'user': {
                 'id': str(user['_id']),
                 'username': user['username'],
-                'email': user['email']
+                'email': user['email'],
+                'role': user.get('role', 'user')
             }
-        })
+        }
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/logout', methods=['GET'])
-def api_logout():
+@app.get('/api/logout')
+async def api_logout(request: Request):
     """Logout user"""
-    session.clear()
-    return jsonify({'success': True, 'message': 'Logged out successfully'})
+    request.session.clear()
+    return {'success': True, 'message': 'Logged out successfully'}
 
-@app.route('/api/register-face-camera', methods=['POST'])
-def api_register_face_camera():
+@app.post('/api/register-face-camera')
+async def api_register_face_camera(request: Request, data: RegisterFaceCameraRequest):
     """Register face from camera capture"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
-        data = request.get_json()
-        name = data.get('name')
-        msv = data.get('msv')
-        image_data = data.get('image')  # Base64 encoded image
-        class_name = data.get('class_name')  # Class name
+        name = data.name
+        msv = data.msv
+        image_data = data.image
+        class_name = data.class_name
         print("DEBUG class_name:", class_name)
         
         if not all([name, msv, image_data]):
-            return jsonify({'success': False, 'message': 'Thiếu tên, MSV hoặc ảnh'}), 400
+            return JSONResponse({'success': False, 'message': 'Thiếu tên, MSV hoặc ảnh'}, status_code=400)
         
         if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
 
         if db_service.get_face_by_msv(msv, class_name):
-            return jsonify({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}), 400
+            return JSONResponse({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}, status_code=400)
         
         if ',' not in image_data:
-            return jsonify({'success': False, 'message': 'Invalid image format'}), 400
+            return JSONResponse({'success': False, 'message': 'Invalid image format'}, status_code=400)
         
         image_bytes = base64.b64decode(image_data.split(',')[1])
         nparr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if image is None:
-            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
+            return JSONResponse({'success': False, 'message': 'Failed to decode image'}, status_code=400)
         
         # Detect face
         faces = face_service.detect_faces(image)
         
         if len(faces) == 0:
-            return jsonify({'success': False, 'message': 'No face detected in image'}), 400
+            return JSONResponse({'success': False, 'message': 'No face detected in image'}, status_code=400)
         
         if len(faces) > 1:
-            return jsonify({'success': False, 'message': 'Multiple faces detected. Please ensure only one face is visible'}), 400
+            return JSONResponse({'success': False, 'message': 'Multiple faces detected. Please ensure only one face is visible'}, status_code=400)
         
         face_box = faces[0]
         encoding = face_service.extract_face_encoding(image, face_box)
         
         if encoding is None:
-            return jsonify({'success': False, 'message': 'Failed to extract face encoding'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to extract face encoding'}, status_code=500)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         image_filename = f"{msv}_{timestamp}.jpg"
         image_path = UPLOAD_FOLDER / image_filename
         cv2.imwrite(str(image_path), image)
         
-        face_id = db_service.create_face(name, msv, encoding, str(image_path), session['user_id'], class_name)
+        face_id = db_service.create_face(name, msv, encoding, str(image_path), request.session['user_id'], class_name)
         
         if face_id:
-            return jsonify({'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'})
+            return {'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'}
         else:
-            return jsonify({'success': False, 'message': 'Failed to save face data'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to save face data'}, status_code=500)
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/register-face-upload', methods=['POST'])
-def api_register_face_upload():
+@app.post('/api/register-face-upload')
+async def api_register_face_upload(
+    request: Request,
+    name: str = Form(...),
+    msv: str = Form(...),
+    class_name: str = Form(...),
+    image: UploadFile = File(...)
+):
     """Register face from uploaded image"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        name = request.form.get('name')
-        msv = request.form.get('msv')
-        class_name = request.form.get('class_name')
-        
-        if 'image' not in request.files:
-            return jsonify({'success': False, 'message': 'No image file provided'}), 400
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
         if not name:
-            return jsonify({'success': False, 'message': 'Vui lòng nhập tên'}), 400
+            return JSONResponse({'success': False, 'message': 'Vui lòng nhập tên'}, status_code=400)
 
         if not msv:
-            return jsonify({'success': False, 'message': 'Vui lòng nhập MSV'}), 400
+            return JSONResponse({'success': False, 'message': 'Vui lòng nhập MSV'}, status_code=400)
         
         if class_name == '':
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
 
         if db_service.get_face_by_msv(msv, class_name):
-            return jsonify({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}), 400
+            return JSONResponse({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}, status_code=400)
         
-        file = request.files['image']
+        file_bytes = np.frombuffer(await image.read(), np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
-        file_bytes = np.frombuffer(file.read(), np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        
-        if image is None:
-            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
+        if img is None:
+            return JSONResponse({'success': False, 'message': 'Failed to decode image'}, status_code=400)
         
         # Detect face
-        faces = face_service.detect_faces(image)
+        faces = face_service.detect_faces(img)
         
         if len(faces) == 0:
-            return jsonify({'success': False, 'message': 'No face detected in image'}), 400
+            return JSONResponse({'success': False, 'message': 'No face detected in image'}, status_code=400)
         
         if len(faces) > 1:
-            return jsonify({'success': False, 'message': 'Multiple faces detected. Please upload image with only one face'}), 400
+            return JSONResponse({'success': False, 'message': 'Multiple faces detected. Please upload image with only one face'}, status_code=400)
         
         face_box = faces[0]
-        encoding = face_service.extract_face_encoding(image, face_box)
+        encoding = face_service.extract_face_encoding(img, face_box)
         
         if encoding is None:
-            return jsonify({'success': False, 'message': 'Failed to extract face encoding'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to extract face encoding'}, status_code=500)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         image_filename = f"{msv}_{timestamp}.jpg"
         image_path = UPLOAD_FOLDER / image_filename
-        cv2.imwrite(str(image_path), image)
+        cv2.imwrite(str(image_path), img)
         
-        face_id = db_service.create_face(name, msv, encoding, str(image_path), session['user_id'], class_name)
+        face_id = db_service.create_face(name, msv, encoding, str(image_path), request.session['user_id'], class_name)
         
         if face_id:
-            return jsonify({'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'})
+            return {'success': True, 'message': f'Đăng ký thành công: {name} (MSV: {msv})'}
         else:
-            return jsonify({'success': False, 'message': 'Failed to save face data'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to save face data'}, status_code=500)
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/classes', methods=['GET'])
-def api_get_classes():
+@app.get('/api/classes')
+async def api_get_classes(request: Request):
     """Get all classes"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
         classes = db_service.get_all_classes()
-        return jsonify({'success': True, 'classes': classes})
+        return {'success': True, 'classes': classes}
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/classes/<class_name>', methods=['DELETE'])
-def api_delete_class(class_name):
+@app.get('/api/classes-stats')
+async def api_get_classes_stats(request: Request):
+    """Get all classes with statistics (student count, session count)"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+        
+        classes = db_service.get_all_classes()
+        classes_stats = []
+        
+        for class_name in classes:
+            # Get student count
+            students = db_service.get_faces_by_class(class_name)
+            student_count = len(students) if students else 0
+            
+            # Get session count
+            sessions = db_service.get_attendance_sessions_by_class(class_name)
+            session_count = len(sessions) if sessions else 0
+            
+            classes_stats.append({
+                'name': class_name,
+                'student_count': student_count,
+                'session_count': session_count
+            })
+        
+        return {'success': True, 'classes': classes_stats}
+        
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.delete('/api/classes/{class_name}')
+async def api_delete_class(request: Request, class_name: str):
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
         if not class_name:
-            return jsonify({'success': False, 'message': 'Thiếu tên lớp'}), 400
+            return JSONResponse({'success': False, 'message': 'Thiếu tên lớp'}, status_code=400)
 
         result = db_service.delete_class(class_name)
         if result is None:
-            return jsonify({'success': False, 'message': 'Xóa lớp thất bại'}), 500
+            return JSONResponse({'success': False, 'message': 'Xóa lớp thất bại'}, status_code=500)
 
-        return jsonify({'success': True, 'deleted': result})
+        return {'success': True, 'deleted': result}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/attendance', methods=['GET'])
-def api_get_attendance():
+@app.post('/api/classes')
+async def api_create_class(request: Request, data: CreateClassRequest):
+    """Create a new empty class"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        class_name = data.class_name
+
+        if not class_name or class_name.strip() == '':
+            return JSONResponse({'success': False, 'message': 'Tên lớp không được để trống'}, status_code=400)
+
+        class_name = class_name.strip()
+
+        # Check if class already exists
+        existing_classes = db_service.get_all_classes()
+        if class_name in existing_classes:
+            return JSONResponse({'success': False, 'message': 'Lớp này đã tồn tại'}, status_code=400)
+
+        # Create the class
+        result = db_service.create_class(class_name, request.session['user_id'])
+        if result:
+            return {'success': True, 'message': 'Thêm lớp thành công', 'class_name': class_name}
+        else:
+            return JSONResponse({'success': False, 'message': 'Thêm lớp thất bại'}, status_code=500)
+
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.put('/api/classes/rename')
+async def api_rename_class(request: Request, data: RenameClassRequest):
+    """Rename a class"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        old_name = data.old_name
+        new_name = data.new_name
+
+        if not old_name or not new_name:
+            return JSONResponse({'success': False, 'message': 'Thiếu tên lớp cũ hoặc mới'}, status_code=400)
+
+        new_name = new_name.strip()
+
+        # Check if new name already exists
+        existing_classes = db_service.get_all_classes()
+        if new_name in existing_classes and new_name != old_name:
+            return JSONResponse({'success': False, 'message': 'Tên lớp mới đã tồn tại'}, status_code=400)
+
+        # Rename the class
+        result = db_service.rename_class(old_name, new_name)
+        if result:
+            return {'success': True, 'message': 'Đổi tên lớp thành công', 'result': result}
+        else:
+            return JSONResponse({'success': False, 'message': 'Đổi tên lớp thất bại'}, status_code=500)
+
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/attendance')
+async def api_get_attendance(request: Request, class_name: str = Query(None)):
     """Get attendance records by class"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        class_name = request.args.get('class_name')
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
         if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
         
         attendance = db_service.get_attendance_by_class(class_name)
-        return jsonify({'success': True, 'attendance': attendance})
+        return {'success': True, 'attendance': attendance}
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/attendance-summary', methods=['GET'])
-def api_get_attendance_summary():
-    """Get attendance summary by class"""
-    global browser_recognized_faces, browser_session_start
-    try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        class_name = request.args.get('class_name')
-        attendance_type = request.args.get('attendance_type')
-        
-        if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
-        
-        use_session = request.args.get('session') == '1'
-        
-        if use_session and browser_session_start:
-            summary = get_browser_session_summary(class_name)
-        elif use_session and rtsp_service.is_running and rtsp_service.session_start_time:
-            if class_name == rtsp_service.class_name and attendance_type == rtsp_service.attendance_type:
-                summary = rtsp_service.get_session_summary()
-            else:
-                summary = db_service.get_attendance_summary(class_name, attendance_type)
-        else:
-            summary = db_service.get_attendance_summary(class_name, attendance_type)
-        return jsonify({'success': True, 'summary': summary})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+# Global variables for browser session
+browser_recognized_faces = {}
+browser_session_start = None
 
 def get_browser_session_summary(class_name):
     global browser_recognized_faces
@@ -363,53 +583,120 @@ def get_browser_session_summary(class_name):
         absent = 0
     return {'present': present, 'absent': absent, 'total': total}
 
-@app.route('/api/attendance-sessions', methods=['GET'])
-def api_get_attendance_sessions():
-    """Get attendance sessions by class"""
+@app.get('/api/attendance-summary')
+async def api_get_attendance_summary(
+    request: Request,
+    class_name: str = Query(None),
+    attendance_type: str = Query(None),
+    session_param: str = Query(None, alias='session')
+):
+    """Get attendance summary by class"""
+    global browser_recognized_faces, browser_session_start
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        class_name = request.args.get('class_name')
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
         if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
         
-        sessions = db_service.get_attendance_sessions_by_class(class_name)
-        return jsonify({'success': True, 'sessions': sessions})
+        use_session = session_param == '1'
+        
+        if use_session and browser_session_start:
+            summary = get_browser_session_summary(class_name)
+        elif use_session and rtsp_service.is_running and rtsp_service.session_start_time:
+            if class_name == rtsp_service.class_name and attendance_type == rtsp_service.attendance_type:
+                summary = rtsp_service.get_session_summary()
+            else:
+                summary = db_service.get_attendance_summary(class_name, attendance_type)
+        else:
+            summary = db_service.get_attendance_summary(class_name, attendance_type)
+        return {'success': True, 'summary': summary}
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/attendance-sessions', methods=['DELETE'])
-def api_delete_attendance_sessions():
+@app.get('/api/attendance-sessions')
+async def api_get_attendance_sessions(
+    request: Request,
+    class_name: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None)
+):
+    """Get attendance sessions by class with optional date filter"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+        
+        if not class_name:
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
+        
+        # Parse dates if provided
+        start_datetime = None
+        end_datetime = None
+        if start_date:
+            try:
+                start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                # Add 1 day to include the end date fully
+                end_datetime = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+            except ValueError:
+                pass
+        
+        sessions = db_service.get_attendance_sessions_by_class(class_name, start_date=start_datetime, end_date=end_datetime)
+        return {'success': True, 'sessions': sessions}
+        
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-        data = request.get_json() or {}
-        session_ids = data.get('session_ids', [])
+@app.delete('/api/attendance-sessions')
+async def api_delete_attendance_sessions(request: Request, data: DeleteSessionsRequest):
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        session_ids = data.session_ids
 
         if not session_ids:
-            return jsonify({'success': False, 'message': 'Session ids are required'}), 400
+            return JSONResponse({'success': False, 'message': 'Session ids are required'}, status_code=400)
 
         deleted_count = db_service.delete_attendance_sessions(session_ids)
-        return jsonify({'success': True, 'deleted': deleted_count})
+        return {'success': True, 'deleted': deleted_count}
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/attendance-sessions/export', methods=['POST'])
-def api_export_attendance_sessions():
+@app.delete('/api/attendance-sessions/{session_id}')
+async def api_delete_attendance_session(request: Request, session_id: str):
+    """Delete a single attendance session by ID"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        data = request.get_json() or {}
-        session_ids = data.get('session_ids', [])
+        if not session_id:
+            return JSONResponse({'success': False, 'message': 'Session id is required'}, status_code=400)
+
+        deleted_count = db_service.delete_attendance_sessions([session_id])
+        if deleted_count > 0:
+            return {'success': True, 'deleted': deleted_count}
+        else:
+            return JSONResponse({'success': False, 'message': 'Session not found'}, status_code=404)
+
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/attendance-sessions/export')
+async def api_export_attendance_sessions(request: Request, data: DeleteSessionsRequest):
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        session_ids = data.session_ids
 
         if not session_ids:
-            return jsonify({'success': False, 'message': 'Session ids are required'}), 400
+            return JSONResponse({'success': False, 'message': 'Session ids are required'}, status_code=400)
 
         rows = []
         for session_id in session_ids:
@@ -434,27 +721,106 @@ def api_export_attendance_sessions():
         output.seek(0)
         filename = f"attendance_sessions_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
         return Response(
-            output.getvalue(),
-            mimetype='text/csv',
+            content=output.getvalue(),
+            media_type='text/csv',
             headers={'Content-Disposition': f'attachment; filename={filename}'}
         )
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/attendance-session-detail', methods=['GET'])
-def api_get_attendance_session_detail():
+@app.get('/api/export-session/{session_id}')
+async def api_export_single_session(request: Request, session_id: str):
+    """Export a single attendance session to CSV"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        session_id = request.args.get('session_id')
         if not session_id:
-            return jsonify({'success': False, 'message': 'Session id is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Session id is required'}, status_code=400)
 
         session_record = db_service.get_attendance_session_by_id(session_id)
         if not session_record:
-            return jsonify({'success': False, 'message': 'Session not found'}), 404
+            return JSONResponse({'success': False, 'message': 'Session not found'}, status_code=404)
+
+        class_name = session_record.get('class_name')
+        attendance_type = session_record.get('attendance_type')
+        start_time = session_record.get('start_time')
+        end_time = session_record.get('end_time')
+        present_faces = session_record.get('present_faces', [])
+
+        # Format times for display
+        start_time_str = start_time.strftime('%d/%m/%Y %H:%M:%S') if start_time else ''
+        end_time_str = end_time.strftime('%d/%m/%Y %H:%M:%S') if end_time else ''
+        attendance_type_str = 'Điểm danh VÀO' if attendance_type == 'in' else 'Điểm danh RA'
+
+        # Get all students in class
+        all_faces = db_service.get_faces_by_class(class_name)
+        all_students = {f.get('msv'): f.get('name') for f in all_faces if f.get('msv')}
+
+        # Build present list from session's present_faces (more reliable)
+        present_data = {}
+        for face in present_faces:
+            msv = face.get('msv')
+            if msv:
+                present_data[msv] = face.get('timestamp', '')
+        
+        # If present_faces is empty, fall back to attendance records
+        if not present_data:
+            records = db_service.get_attendance_records_in_range(
+                class_name, attendance_type, start_time, end_time
+            )
+            for record in records:
+                msv = record.get('msv')
+                if msv:
+                    present_data[msv] = record.get('timestamp', '')
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write session info header
+        writer.writerow(['THÔNG TIN PHIÊN ĐIỂM DANH'])
+        writer.writerow(['Lớp', class_name])
+        writer.writerow(['Loại điểm danh', attendance_type_str])
+        writer.writerow(['Thời gian bắt đầu', start_time_str])
+        writer.writerow(['Thời gian kết thúc', end_time_str])
+        writer.writerow(['Tổng sinh viên', len(all_students)])
+        writer.writerow(['Có mặt', len(present_data)])
+        writer.writerow(['Vắng', len(all_students) - len(present_data)])
+        writer.writerow([])  # Empty row as separator
+        
+        # Write student list header
+        writer.writerow(['STT', 'MSV', 'Họ và tên', 'Trạng thái'])
+
+        stt = 1
+        for msv, name in all_students.items():
+            status = 'Có mặt' if msv in present_data else 'Vắng'
+            writer.writerow([stt, msv, name, status])
+            stt += 1
+
+        output.seek(0)
+        filename = f"attendance_{class_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/attendance-session-detail')
+async def api_get_attendance_session_detail(request: Request, session_id: str = Query(None)):
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        if not session_id:
+            return JSONResponse({'success': False, 'message': 'Session id is required'}, status_code=400)
+
+        session_record = db_service.get_attendance_session_by_id(session_id)
+        if not session_record:
+            return JSONResponse({'success': False, 'message': 'Session not found'}, status_code=404)
 
         class_name = session_record.get('class_name')
         attendance_type = session_record.get('attendance_type')
@@ -467,52 +833,85 @@ def api_get_attendance_session_detail():
             start_time,
             end_time
         )
+        # Use MSV as unique identifier instead of name
         present_map = {}
         for record in records:
-            name = record.get('name') or ''
-            normalized = db_service._normalize_name(name)
-            if not normalized:
+            msv = record.get('msv') or ''
+            if not msv:
                 continue
-            existing = present_map.get(normalized)
+            existing = present_map.get(msv)
             if existing is None or record.get('timestamp') > existing.get('timestamp'):
-                present_map[normalized] = record
+                present_map[msv] = record
 
         all_faces = db_service.get_faces_by_class(class_name)
-        face_msv_map = {db_service._normalize_name(f.get('name')): f.get('msv') for f in all_faces if f.get('name')}
+        
+        # Build face info map using MSV as key (includes db_image for both present and absent)
+        face_info_map = {}
+        for face in all_faces:
+            msv = face.get('msv')
+            if msv:
+                # Read image and convert to base64
+                image_path = face.get('image_path')
+                db_image_b64 = None
+                if image_path and os.path.exists(image_path):
+                    try:
+                        img = cv2.imread(image_path)
+                        if img is not None:
+                            _, buffer = cv2.imencode('.jpg', img)
+                            db_image_b64 = base64.b64encode(buffer).decode('utf-8')
+                    except:
+                        pass
+                face_info_map[msv] = {
+                    'name': face.get('name', ''),
+                    'msv': msv,
+                    'db_image': db_image_b64
+                }
         
         present_faces = []
         if present_map:
-            for record in present_map.values():
-                name = record.get('name')
-                normalized = db_service._normalize_name(name)
+            for msv, record in present_map.items():
+                face_info = face_info_map.get(msv, {})
                 present_faces.append({
-                    'name': name,
-                    'msv': face_msv_map.get(normalized, ''),
-                    'face_image': record.get('face_image')
+                    'name': record.get('name') or face_info.get('name', ''),
+                    'msv': msv,
+                    'face_image': record.get('face_image'),
+                    'db_image': face_info.get('db_image')
                 })
         elif session_record.get('present_faces'):
             pf = session_record.get('present_faces', [])
             for face in pf:
-                name = face.get('name')
-                normalized = db_service._normalize_name(name)
-                present_faces.append({
-                    'name': name,
-                    'msv': face_msv_map.get(normalized, ''),
-                    'face_image': face.get('face_image')
+                msv = face.get('msv')
+                if msv:
+                    face_info = face_info_map.get(msv, {})
+                    present_faces.append({
+                        'name': face.get('name') or face_info.get('name', ''),
+                        'msv': msv,
+                        'face_image': face.get('face_image'),
+                        'db_image': face_info.get('db_image')
+                    })
+
+        # Get all student MSVs in the class
+        all_student_msvs = set(db_service.get_class_students_msvs(class_name))
+        present_msvs = {face.get('msv') for face in present_faces if face.get('msv')}
+        
+        absent_names = []
+        absent_faces = []
+        for msv in all_student_msvs:
+            if msv not in present_msvs:
+                # Get face info for absent student
+                face_info = face_info_map.get(msv, {'name': '', 'msv': msv, 'db_image': None})
+                absent_names.append(face_info.get('name', ''))
+                absent_faces.append({
+                    'name': face_info.get('name', ''),
+                    'msv': msv,
+                    'face_image': face_info.get('db_image')  # Use db_image as face_image for absent
                 })
 
-        all_students = db_service.get_class_students(class_name)
-        present_normalized = {db_service._normalize_name(face.get('name')) for face in present_faces if face.get('name')}
-        absent_names = []
-        for name in all_students:
-            if db_service._normalize_name(name) not in present_normalized:
-                absent_names.append(name)
-
-        total_students = len(all_students)
+        total_students = len(all_student_msvs)
         present_count = len(present_faces)
-        absent_count = len(absent_names)
+        absent_count = len(absent_faces)
 
-        return jsonify({
+        return {
             'success': True,
             'session': {
                 'class_name': class_name,
@@ -525,64 +924,185 @@ def api_get_attendance_session_detail():
             },
             'present_names': [face.get('name') for face in present_faces],
             'present_faces': present_faces,
-            'absent_names': absent_names
-        })
+            'absent_names': absent_names,
+            'absent_faces': absent_faces
+        }
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/class-students', methods=['GET'])
-def api_get_class_students():
+@app.get('/api/class-students')
+async def api_get_class_students(request: Request, class_name: str = Query(None)):
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        class_name = request.args.get('class_name')
         if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
 
         students = db_service.get_faces_by_class(class_name)
-        return jsonify({'success': True, 'students': students})
+        return {'success': True, 'students': students}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/class-students/<student_id>', methods=['PUT'])
-def api_update_class_student(student_id):
+@app.get('/api/all-students')
+async def api_get_all_students(
+    request: Request,
+    search: str = Query(None),
+    sort_by: str = Query('name')
+):
+    """Get all students from all classes with search and sort"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        data = request.get_json() or {}
-        name = data.get('name')
+        students = db_service.get_all_students(search_msv=search, sort_by=sort_by)
+        return {'success': True, 'students': students, 'total': len(students)}
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/student/{student_id}')
+async def api_get_student(request: Request, student_id: str):
+    """Get single student by ID"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        student = db_service.get_face_by_id(student_id)
+        if not student:
+            return JSONResponse({'success': False, 'message': 'Student not found'}, status_code=404)
+
+        return {
+            'success': True,
+            'student': {
+                'id': str(student['_id']),
+                'name': student.get('name'),
+                'msv': student.get('msv'),
+                'class_name': student.get('class_name'),
+                'image_path': student.get('image_path'),
+                'created_at': student.get('created_at').isoformat() if student.get('created_at') else None
+            }
+        }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/student-image/{student_id}')
+async def api_get_student_image(student_id: str):
+    """Get student face image"""
+    try:
+        student = db_service.get_face_by_id(student_id)
+        if not student or not student.get('image_path'):
+            return JSONResponse({'success': False, 'message': 'Image not found'}, status_code=404)
+
+        image_path = student['image_path']
+        if not os.path.isabs(image_path):
+            image_path = os.path.join(os.getcwd(), image_path)
+
+        if not os.path.exists(image_path):
+            return JSONResponse({'success': False, 'message': 'Image file not found'}, status_code=404)
+
+        return FileResponse(image_path, media_type='image/jpeg')
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/student/update')
+async def api_update_student(request: Request, data: UpdateStudentRequest):
+    """Update student info (name, msv, image)"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        student_id = data.id
+        name = data.name
+        msv = data.msv
+        image_data = data.image
+
+        if not student_id:
+            return JSONResponse({'success': False, 'message': 'Student ID is required'}, status_code=400)
+
+        if not name or not msv:
+            return JSONResponse({'success': False, 'message': 'Name and MSV are required'}, status_code=400)
+
+        # Get current student info
+        student = db_service.get_face_by_id(student_id)
+        if not student:
+            return JSONResponse({'success': False, 'message': 'Student not found'}, status_code=404)
+
+        # Check if MSV already exists (for different student in same class)
+        existing = db_service.get_face_by_msv(msv, student.get('class_name'))
+        if existing and str(existing['_id']) != student_id:
+            return JSONResponse({'success': False, 'message': 'MSV đã tồn tại trong lớp này'}, status_code=400)
+
+        # Process new image if provided
+        new_image_path = None
+        new_encoding = None
+        if image_data and ',' in image_data:
+            image_bytes = base64.b64decode(image_data.split(',')[1])
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if image is not None:
+                # Detect and extract face encoding
+                faces = face_service.detect_faces(image)
+                if len(faces) == 0:
+                    return JSONResponse({'success': False, 'message': 'Không phát hiện khuôn mặt trong ảnh'}, status_code=400)
+                if len(faces) > 1:
+                    return JSONResponse({'success': False, 'message': 'Phát hiện nhiều khuôn mặt. Vui lòng chọn ảnh có 1 khuôn mặt'}, status_code=400)
+
+                face_box = faces[0]
+                new_encoding = face_service.extract_face_encoding(image, face_box)
+
+                # Save new image
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                image_filename = f"{msv}_{timestamp}.jpg"
+                new_image_path = str(UPLOAD_FOLDER / image_filename)
+                cv2.imwrite(new_image_path, image)
+
+        # Update student in database
+        updated = db_service.update_face(student_id, name, msv, new_encoding, new_image_path)
+        if updated:
+            return {'success': True, 'message': 'Cập nhật thành công'}
+        return JSONResponse({'success': False, 'message': 'Cập nhật thất bại'}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.put('/api/class-students/{student_id}')
+async def api_update_class_student(request: Request, student_id: str, data: UpdateStudentNameRequest):
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        name = data.name
         if not name:
-            return jsonify({'success': False, 'message': 'Name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Name is required'}, status_code=400)
 
         updated = db_service.update_face_name(student_id, name)
         if updated:
-            return jsonify({'success': True})
-        return jsonify({'success': False, 'message': 'Update failed'}), 400
+            return {'success': True}
+        return JSONResponse({'success': False, 'message': 'Update failed'}, status_code=400)
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/class-students/<student_id>', methods=['DELETE'])
-def api_delete_class_student(student_id):
+@app.delete('/api/class-students/{student_id}')
+async def api_delete_class_student(request: Request, student_id: str):
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
         deleted = db_service.delete_face(student_id)
         if deleted:
-            return jsonify({'success': True})
-        return jsonify({'success': False, 'message': 'Delete failed'}), 400
+            return {'success': True}
+        return JSONResponse({'success': False, 'message': 'Delete failed'}, status_code=400)
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/faces', methods=['GET'])
-def api_get_faces():
+@app.get('/api/faces')
+async def api_get_faces(request: Request):
     """Get all registered faces"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
         faces = db_service.get_all_faces()
         
@@ -596,47 +1116,46 @@ def api_get_faces():
                 'created_at': face['created_at'].isoformat() if face.get('created_at') else None
             })
         
-        return jsonify({'success': True, 'faces': face_list})
+        return {'success': True, 'faces': face_list}
         
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/start-rtsp', methods=['POST'])
-def api_start_rtsp():
+@app.post('/api/start-rtsp')
+async def api_start_rtsp(request: Request, data: StartRTSPRequest):
     """Start RTSP stream"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
         
-        data = request.get_json()
-        rtsp_url = data.get('rtsp_url')
-        class_name = data.get('class_name')
-        attendance_type = data.get('attendance_type', 'in') # Default to 'in'
+        rtsp_url = data.rtsp_url
+        class_name = data.class_name
+        attendance_type = data.attendance_type
         
         if not rtsp_url:
-            return jsonify({'success': False, 'message': 'RTSP URL is required'}), 400
+            return JSONResponse({'success': False, 'message': 'RTSP URL is required'}, status_code=400)
         
-        success = rtsp_service.start_stream(rtsp_url, class_name, session['user_id'], attendance_type)
+        success = rtsp_service.start_stream(rtsp_url, class_name, request.session['user_id'], attendance_type)
         
         if success:
-            return jsonify({'success': True, 'message': 'RTSP stream started'})
+            return {'success': True, 'message': 'RTSP stream started'}
         else:
-            return jsonify({'success': False, 'message': 'Failed to start RTSP stream'}), 500
+            return JSONResponse({'success': False, 'message': 'Failed to start RTSP stream'}, status_code=500)
             
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/stop-rtsp', methods=['GET'])
-def api_stop_rtsp():
+@app.get('/api/stop-rtsp')
+async def api_stop_rtsp():
     """Stop RTSP stream"""
     try:
         rtsp_service.stop_stream()
-        return jsonify({'success': True, 'message': 'RTSP stream stopped'})
+        return {'success': True, 'message': 'RTSP stream stopped'}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/video-feed')
-def video_feed():
+@app.get('/api/video-feed')
+async def video_feed():
     """Video feed endpoint"""
     def generate():
         while rtsp_service.is_running:
@@ -647,39 +1166,35 @@ def video_feed():
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
     
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return StreamingResponse(generate(), media_type='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/api/recognized-faces', methods=['GET'])
-def api_recognized_faces():
+@app.get('/api/recognized-faces')
+async def api_recognized_faces():
     """Get currently recognized faces"""
     try:
         faces = rtsp_service.get_recognized_faces()
-        return jsonify({'success': True, 'faces': faces})
+        return {'success': True, 'faces': faces}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-browser_recognized_faces = {}
-browser_session_start = None
-
-@app.route('/api/browser-session/start', methods=['POST'])
-def api_browser_session_start():
+@app.post('/api/browser-session/start')
+async def api_browser_session_start():
     """Start browser camera session"""
     global browser_recognized_faces, browser_session_start
     browser_recognized_faces = {}
     browser_session_start = datetime.now()
-    return jsonify({'success': True})
+    return {'success': True}
 
-@app.route('/api/browser-session/stop', methods=['POST'])
-def api_browser_session_stop():
+@app.post('/api/browser-session/stop')
+async def api_browser_session_stop(request: Request, data: BrowserSessionStopRequest):
     """Stop browser camera session and save attendance"""
     global browser_recognized_faces, browser_session_start
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        data = request.get_json() or {}
-        class_name = data.get('class_name')
-        attendance_type = data.get('attendance_type', 'in')
+        class_name = data.class_name
+        attendance_type = data.attendance_type
 
         if class_name and browser_session_start:
             end_time = datetime.now()
@@ -687,14 +1202,22 @@ def api_browser_session_stop():
             for face_data in browser_recognized_faces.values():
                 present_faces.append({
                     'name': face_data.get('name'),
+                    'msv': face_data.get('msv'),
                     'face_image': face_data.get('face_image')
                 })
+
+            print(f"DEBUG browser_session_stop: class={class_name}, type={attendance_type}")
+            print(f"DEBUG browser_session_stop: start={browser_session_start}, end={end_time}")
+            print(f"DEBUG browser_session_stop: present_faces count={len(present_faces)}")
+            print(f"DEBUG browser_session_stop: browser_recognized_faces={browser_recognized_faces}")
 
             summary = db_service.get_attendance_summary_in_range(
                 class_name, attendance_type, browser_session_start, end_time
             )
+            print(f"DEBUG browser_session_stop: summary={summary}")
+            
             db_service.create_attendance_session(
-                class_name, attendance_type, session['user_id'],
+                class_name, attendance_type, request.session['user_id'],
                 browser_session_start, end_time,
                 summary.get('present', 0), summary.get('total', 0),
                 summary.get('absent', 0), present_faces=present_faces
@@ -702,36 +1225,35 @@ def api_browser_session_stop():
 
         browser_recognized_faces = {}
         browser_session_start = None
-        return jsonify({'success': True})
+        return {'success': True}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/recognize-frame', methods=['POST'])
-def api_recognize_frame():
+@app.post('/api/recognize-frame')
+async def api_recognize_frame(request: Request, data: RecognizeFrameRequest):
     """Recognize faces from browser camera frame"""
     global browser_recognized_faces
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        data = request.get_json()
-        image_data = data.get('image')
-        class_name = data.get('class_name')
-        attendance_type = data.get('attendance_type', 'in')
+        image_data = data.image
+        class_name = data.class_name
+        attendance_type = data.attendance_type
 
         if not image_data or ',' not in image_data:
-            return jsonify({'success': False, 'message': 'Invalid image'}), 400
+            return JSONResponse({'success': False, 'message': 'Invalid image'}, status_code=400)
 
         image_bytes = base64.b64decode(image_data.split(',')[1])
         nparr = np.frombuffer(image_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         if frame is None:
-            return jsonify({'success': False, 'message': 'Failed to decode image'}), 400
+            return JSONResponse({'success': False, 'message': 'Failed to decode image'}, status_code=400)
 
         faces = face_service.detect_faces(frame)
         if not faces:
-            return jsonify({'success': True, 'faces': list(browser_recognized_faces.values())})
+            return {'success': True, 'faces': list(browser_recognized_faces.values())}
 
         known_faces = db_service.get_faces_by_class(class_name) if class_name else []
         new_recognitions = []
@@ -772,9 +1294,9 @@ def api_recognize_frame():
                 
                 if person_key not in browser_recognized_faces:
                     db_service.create_attendance(
-                        name, class_name, session['user_id'], attendance_type,
+                        name, class_name, request.session['user_id'], attendance_type,
                         attendance_time=datetime.now(), allow_duplicate=True,
-                        face_image=face_image_base64
+                        face_image=face_image_base64, msv=msv
                     )
 
                 browser_recognized_faces[person_key] = {
@@ -788,101 +1310,325 @@ def api_recognize_frame():
                     'db_image': db_image_base64
                 }
 
-        return jsonify({'success': True, 'faces': list(browser_recognized_faces.values())})
+        return {'success': True, 'faces': list(browser_recognized_faces.values())}
 
     except Exception as e:
         print(f"Error in recognize-frame: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
 # Schedule API endpoints
-@app.route('/api/schedules', methods=['POST'])
-def api_create_schedule():
+@app.post('/api/schedules')
+async def api_create_schedule(request: Request, data: CreateScheduleRequest):
     """Create a new attendance schedule"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        data = request.get_json()
-        class_name = data.get('class_name')
-        attendance_type = data.get('attendance_type', 'in')
-        rtsp_url = data.get('rtsp_url', '0')
-        start_hour = data.get('start_hour')
-        start_minute = data.get('start_minute', 0)
-        duration_minutes = data.get('duration_minutes', 15)
-        total_days = data.get('total_days', 1)
+        class_name = data.class_name
+        attendance_type = data.attendance_type
+        rtsp_url = data.rtsp_url
+        start_hour = data.start_hour
+        start_minute = data.start_minute
+        duration_minutes = data.duration_minutes
+        total_days = data.total_days
 
         if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
         if start_hour is None:
-            return jsonify({'success': False, 'message': 'Start hour is required'}), 400
+            return JSONResponse({'success': False, 'message': 'Start hour is required'}, status_code=400)
 
         schedule_id = db_service.create_schedule(
             class_name, attendance_type, rtsp_url,
             int(start_hour), int(start_minute),
             int(duration_minutes), int(total_days),
-            session['user_id']
+            request.session['user_id']
         )
 
         if schedule_id:
-            return jsonify({'success': True, 'schedule_id': schedule_id})
-        return jsonify({'success': False, 'message': 'Failed to create schedule'}), 500
+            return {'success': True, 'schedule_id': schedule_id}
+        return JSONResponse({'success': False, 'message': 'Failed to create schedule'}, status_code=500)
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/schedules', methods=['GET'])
-def api_get_schedules():
-    """Get schedules for a class"""
+@app.get('/api/schedules')
+async def api_get_schedules(request: Request, class_name: str = Query(None)):
+    """Get schedules for a class or all schedules"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
-        class_name = request.args.get('class_name')
-        if not class_name:
-            return jsonify({'success': False, 'message': 'Class name is required'}), 400
-
-        schedules = db_service.get_schedules_by_class(class_name)
+        if class_name:
+            schedules = db_service.get_schedules_by_class(class_name)
+        else:
+            # Return all schedules across all classes
+            schedules = db_service.get_all_schedules()
+        
         scheduler_status = scheduler.get_status()
-        return jsonify({'success': True, 'schedules': schedules, 'scheduler': scheduler_status})
+        return {'success': True, 'schedules': schedules, 'scheduler': scheduler_status}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/schedules/<schedule_id>/toggle', methods=['PUT'])
-def api_toggle_schedule(schedule_id):
+@app.put('/api/schedules/{schedule_id}/toggle')
+async def api_toggle_schedule(request: Request, schedule_id: str):
     """Toggle schedule active status"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
         result = db_service.toggle_schedule(schedule_id)
         if result is None:
-            return jsonify({'success': False, 'message': 'Schedule not found'}), 404
-        return jsonify({'success': True, 'active': result})
+            return JSONResponse({'success': False, 'message': 'Schedule not found'}, status_code=404)
+        return {'success': True, 'active': result}
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-@app.route('/api/schedules/<schedule_id>', methods=['DELETE'])
-def api_delete_schedule(schedule_id):
+@app.delete('/api/schedules/{schedule_id}')
+async def api_delete_schedule(request: Request, schedule_id: str):
     """Delete a schedule"""
     try:
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
 
         deleted = db_service.delete_schedule(schedule_id)
         if deleted:
-            return jsonify({'success': True})
-        return jsonify({'success': False, 'message': 'Delete failed'}), 400
+            return {'success': True}
+        return JSONResponse({'success': False, 'message': 'Delete failed'}, status_code=400)
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
-if __name__ == '__main__':
+# ==================== USER MANAGEMENT APIs (Admin only) ====================
+
+@app.get('/api/users')
+async def api_get_users(request: Request):
+    """Get all users (Admin only)"""
+    try:
+        require_admin(request)
+        users = db_service.get_all_users()
+        return {'success': True, 'users': users}
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/users/{user_id}')
+async def api_get_user(request: Request, user_id: str):
+    """Get single user details (Admin only)"""
+    try:
+        require_admin(request)
+        user = db_service.get_user_by_id(user_id)
+        if not user:
+            return JSONResponse({'success': False, 'message': 'User not found'}, status_code=404)
+        
+        return {
+            'success': True,
+            'user': {
+                'id': str(user['_id']),
+                'username': user.get('username', ''),
+                'email': user.get('email', ''),
+                'role': user.get('role', 'user'),
+                'is_active': user.get('is_active', True),
+                'created_at': user.get('created_at')
+            }
+        }
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/users')
+async def api_create_user(request: Request, data: CreateUserRequest):
+    """Create a new user (Admin only)"""
+    try:
+        require_admin(request)
+        
+        # Validate required fields
+        if not all([data.username, data.email, data.password]):
+            return JSONResponse({'success': False, 'message': 'Vui lòng điền đầy đủ thông tin'}, status_code=400)
+        
+        # Check if email exists
+        if db_service.get_user_by_email(data.email):
+            return JSONResponse({'success': False, 'message': 'Email đã tồn tại'}, status_code=400)
+        
+        # Check if username exists
+        if db_service.get_user_by_username(data.username):
+            return JSONResponse({'success': False, 'message': 'Tên đăng nhập đã tồn tại'}, status_code=400)
+        
+        # Validate role
+        if data.role not in ['user', 'admin']:
+            return JSONResponse({'success': False, 'message': 'Role không hợp lệ'}, status_code=400)
+        
+        # Create user
+        user_id = db_service.create_user(data.username, data.email, data.password, data.role)
+        
+        if user_id:
+            return {'success': True, 'message': 'Tạo tài khoản thành công', 'user_id': user_id}
+        else:
+            return JSONResponse({'success': False, 'message': 'Không thể tạo tài khoản'}, status_code=500)
+            
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.put('/api/users/{user_id}')
+async def api_update_user(request: Request, user_id: str, data: UpdateUserRequest):
+    """Update user information (Admin only)"""
+    try:
+        require_admin(request)
+        
+        # Check if user exists
+        user = db_service.get_user_by_id(user_id)
+        if not user:
+            return JSONResponse({'success': False, 'message': 'Không tìm thấy người dùng'}, status_code=404)
+        
+        # Prevent admin from deactivating themselves
+        if user_id == request.session.get('user_id') and data.is_active == False:
+            return JSONResponse({'success': False, 'message': 'Không thể vô hiệu hóa tài khoản của chính mình'}, status_code=400)
+        
+        # Prevent admin from removing their own admin role
+        if user_id == request.session.get('user_id') and data.role == 'user':
+            return JSONResponse({'success': False, 'message': 'Không thể thay đổi quyền của chính mình'}, status_code=400)
+        
+        # Check email uniqueness if changing email
+        if data.email and data.email != user.get('email'):
+            existing = db_service.get_user_by_email(data.email)
+            if existing:
+                return JSONResponse({'success': False, 'message': 'Email đã tồn tại'}, status_code=400)
+        
+        # Check username uniqueness if changing username
+        if data.username and data.username != user.get('username'):
+            existing = db_service.get_user_by_username(data.username)
+            if existing:
+                return JSONResponse({'success': False, 'message': 'Tên đăng nhập đã tồn tại'}, status_code=400)
+        
+        # Update user
+        result = db_service.update_user(user_id, data.username, data.email, data.role, data.is_active)
+        
+        if result:
+            return {'success': True, 'message': 'Cập nhật thành công'}
+        else:
+            return JSONResponse({'success': False, 'message': 'Không có thay đổi nào được thực hiện'}, status_code=400)
+            
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.put('/api/users/{user_id}/password')
+async def api_update_user_password(request: Request, user_id: str, data: UpdateUserPasswordRequest):
+    """Update user password (Admin only)"""
+    try:
+        require_admin(request)
+        
+        # Check if user exists
+        user = db_service.get_user_by_id(user_id)
+        if not user:
+            return JSONResponse({'success': False, 'message': 'Không tìm thấy người dùng'}, status_code=404)
+        
+        if not data.password or len(data.password) < 6:
+            return JSONResponse({'success': False, 'message': 'Mật khẩu phải có ít nhất 6 ký tự'}, status_code=400)
+        
+        result = db_service.update_user_password(user_id, data.password)
+        
+        if result:
+            return {'success': True, 'message': 'Đổi mật khẩu thành công'}
+        else:
+            return JSONResponse({'success': False, 'message': 'Không thể đổi mật khẩu'}, status_code=500)
+            
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.delete('/api/users/{user_id}')
+async def api_delete_user(request: Request, user_id: str):
+    """Delete a user (Admin only)"""
+    try:
+        require_admin(request)
+        
+        # Prevent admin from deleting themselves
+        if user_id == request.session.get('user_id'):
+            return JSONResponse({'success': False, 'message': 'Không thể xóa tài khoản của chính mình'}, status_code=400)
+        
+        # Check if user exists
+        user = db_service.get_user_by_id(user_id)
+        if not user:
+            return JSONResponse({'success': False, 'message': 'Không tìm thấy người dùng'}, status_code=404)
+        
+        result = db_service.delete_user(user_id)
+        
+        if result:
+            return {'success': True, 'message': 'Xóa tài khoản thành công'}
+        else:
+            return JSONResponse({'success': False, 'message': 'Không thể xóa tài khoản'}, status_code=500)
+            
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/users/stats/count')
+async def api_get_user_stats(request: Request):
+    """Get user statistics (Admin only)"""
+    try:
+        require_admin(request)
+        
+        total_users = db_service.count_users()
+        admin_users = db_service.count_admin_users()
+        
+        return {
+            'success': True,
+            'stats': {
+                'total_users': total_users,
+                'admin_users': admin_users,
+                'regular_users': total_users - admin_users
+            }
+        }
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'message': e.detail}, status_code=e.status_code)
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.get('/api/me')
+async def api_get_current_user(request: Request):
+    """Get current logged in user info"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+        
+        user = db_service.get_user_by_id(request.session['user_id'])
+        if not user:
+            return JSONResponse({'success': False, 'message': 'User not found'}, status_code=404)
+        
+        return {
+            'success': True,
+            'user': {
+                'id': str(user['_id']),
+                'username': user.get('username', ''),
+                'email': user.get('email', ''),
+                'role': user.get('role', 'user'),
+                'is_active': user.get('is_active', True)
+            }
+        }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
     print("\n" + "="*50)
     print("Face Recognition Attendance System")
     print("="*50)
-    print("\nStarting Flask application...")
+    print("\nStarting FastAPI application...")
     print("Access the application at: http://localhost:5000")
     print("\nPress Ctrl+C to stop the server\n")
     
+    # Ensure at least one admin exists
+    db_service.ensure_admin_exists()
+    
     # Start the scheduler
     scheduler.start()
-    
-    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=5000)

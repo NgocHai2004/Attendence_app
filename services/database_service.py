@@ -62,7 +62,7 @@ class DatabaseService:
         return normalized.strip().lower()
     
     # User operations
-    def create_user(self, username, email, password):
+    def create_user(self, username, email, password, role='user'):
         """Create a new user"""
         try:
             # Hash password
@@ -72,11 +72,10 @@ class DatabaseService:
                 'username': username,
                 'email': email,
                 'password': hashed_password.decode('utf-8'),
-                'created_at': None
+                'role': role,
+                'is_active': True,
+                'created_at': datetime.utcnow()
             }
-            
-            
-            user_data['created_at'] = datetime.utcnow()
             
             result = self.users_collection.insert_one(user_data)
             return str(result.inserted_id)
@@ -92,9 +91,129 @@ class DatabaseService:
         """Get user by username"""
         return self.users_collection.find_one({'username': username})
     
+    def get_user_by_id(self, user_id):
+        """Get user by ID"""
+        try:
+            return self.users_collection.find_one({'_id': ObjectId(user_id)})
+        except Exception as e:
+            print(f"Error getting user by id: {e}")
+            return None
+    
     def verify_password(self, plain_password, hashed_password):
         """Verify password"""
         return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    
+    def get_all_users(self):
+        """Get all users (for admin)"""
+        try:
+            users = self.users_collection.find({}, {'password': 0})  # Exclude password
+            result = []
+            for user in users:
+                result.append({
+                    'id': str(user['_id']),
+                    'username': user.get('username', ''),
+                    'email': user.get('email', ''),
+                    'role': user.get('role', 'user'),
+                    'is_active': user.get('is_active', True),
+                    'created_at': user.get('created_at')
+                })
+            return result
+        except Exception as e:
+            print(f"Error getting all users: {e}")
+            return []
+    
+    def update_user(self, user_id, username=None, email=None, role=None, is_active=None):
+        """Update user information"""
+        try:
+            update_data = {}
+            if username is not None:
+                update_data['username'] = username
+            if email is not None:
+                update_data['email'] = email
+            if role is not None:
+                update_data['role'] = role
+            if is_active is not None:
+                update_data['is_active'] = is_active
+            
+            if not update_data:
+                return False
+            
+            result = self.users_collection.update_one(
+                {'_id': ObjectId(user_id)},
+                {'$set': update_data}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating user: {e}")
+            return False
+    
+    def update_user_password(self, user_id, new_password):
+        """Update user password"""
+        try:
+            hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+            result = self.users_collection.update_one(
+                {'_id': ObjectId(user_id)},
+                {'$set': {'password': hashed_password.decode('utf-8')}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating user password: {e}")
+            return False
+    
+    def delete_user(self, user_id):
+        """Delete a user"""
+        try:
+            result = self.users_collection.delete_one({'_id': ObjectId(user_id)})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting user: {e}")
+            return False
+    
+    def count_users(self):
+        """Count total users"""
+        try:
+            return self.users_collection.count_documents({})
+        except Exception as e:
+            print(f"Error counting users: {e}")
+            return 0
+    
+    def count_admin_users(self):
+        """Count admin users"""
+        try:
+            return self.users_collection.count_documents({'role': 'admin'})
+        except Exception as e:
+            print(f"Error counting admin users: {e}")
+            return 0
+    
+    def ensure_admin_exists(self):
+        """Ensure at least one admin user exists, create default if none"""
+        try:
+            admin_count = self.count_admin_users()
+            if admin_count == 0:
+                # Create default admin user
+                self.create_user(
+                    username='admin',
+                    email='admin@gmail.com',
+                    password='admin@123',
+                    role='admin'
+                )
+                print("✓ Created default admin user (Email: admin@gmail.com / Password: admin@123)")
+                return True
+            else:
+                # Check if old admin with email 'admin' exists and update to new email
+                old_admin = self.get_user_by_email('admin')
+                if old_admin:
+                    # Update old admin email to admin@gmail.com
+                    self.users_collection.update_one(
+                        {'_id': old_admin['_id']},
+                        {'$set': {'email': 'admin@gmail.com'}}
+                    )
+                    print("✓ Updated admin email from 'admin' to 'admin@gmail.com'")
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error ensuring admin exists: {e}")
+            return False
     
     # Face operations
     def create_face(self, name, msv, encoding, image_path, user_id, class_name=None):
@@ -131,6 +250,35 @@ class DatabaseService:
         """Get all face encodings"""
         return list(self.faces_collection.find())
     
+    def get_all_students(self, search_msv=None, sort_by='name'):
+        """Get all students from all classes, sorted alphabetically with optional MSV search"""
+        try:
+            query = {'is_placeholder': {'$ne': True}}
+            
+            # Add MSV search filter if provided
+            if search_msv:
+                query['msv'] = {'$regex': search_msv, '$options': 'i'}
+            
+            # Determine sort field and direction
+            sort_field = 'name' if sort_by == 'name' else sort_by
+            
+            faces = self.faces_collection.find(query).sort(sort_field, 1)
+            
+            result = []
+            for face in faces:
+                result.append({
+                    'id': str(face['_id']),
+                    'name': face.get('name', ''),
+                    'msv': face.get('msv', ''),
+                    'class_name': face.get('class_name', ''),
+                    'image_path': face.get('image_path', ''),
+                    'created_at': face.get('created_at').isoformat() if face.get('created_at') else None
+                })
+            return result
+        except Exception as e:
+            print(f"Error getting all students: {e}")
+            return []
+    
     def get_faces_by_user(self, user_id):
         """Get all faces registered by a user"""
 
@@ -144,7 +292,11 @@ class DatabaseService:
 
     def get_faces_by_class(self, class_name):
         try:
-            faces = self.faces_collection.find({'class_name': class_name})
+            # Exclude placeholder entries
+            faces = self.faces_collection.find({
+                'class_name': class_name,
+                'is_placeholder': {'$ne': True}
+            })
             result = []
             for face in faces:
                 result.append({
@@ -171,6 +323,43 @@ class DatabaseService:
         except Exception as e:
             print(f"Error updating face name: {e}")
             return False
+
+    def get_face_by_id(self, face_id):
+        """Get a single face by ID"""
+        try:
+            return self.faces_collection.find_one({'_id': ObjectId(face_id)})
+        except Exception as e:
+            print(f"Error getting face by id: {e}")
+            return None
+
+    def update_face(self, face_id, name, msv, encoding=None, image_path=None):
+        """Update face info (name, msv, optionally encoding and image)"""
+        try:
+            # First check if the face exists
+            existing = self.faces_collection.find_one({'_id': ObjectId(face_id)})
+            if not existing:
+                print(f"Face with id {face_id} not found")
+                return False
+            
+            update_data = {
+                'name': name,
+                'msv': msv,
+                'updated_at': datetime.utcnow()
+            }
+            if encoding is not None:
+                update_data['encoding'] = encoding.tolist() if hasattr(encoding, 'tolist') else encoding
+            if image_path is not None:
+                update_data['image_path'] = image_path
+
+            result = self.faces_collection.update_one(
+                {'_id': ObjectId(face_id)},
+                {'$set': update_data}
+            )
+            # Return True if document was found, regardless of whether data changed
+            return result.matched_count > 0
+        except Exception as e:
+            print(f"Error updating face: {e}")
+            return False
     
     # Class operations
     def get_all_classes(self):
@@ -191,9 +380,59 @@ class DatabaseService:
         except Exception as e:
             print(f"Error deleting class: {e}")
             return None
+
+    def create_class(self, class_name, user_id):
+        """Create a new empty class by adding a placeholder document"""
+        try:
+            # Create an empty placeholder in faces_collection
+            # This will be replaced when actual students are added
+            class_data = {
+                'name': '__class_placeholder__',
+                'msv': '__placeholder__',
+                'class_name': class_name,
+                'encoding': [],
+                'image_path': '',
+                'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
+                'created_at': datetime.utcnow(),
+                'is_placeholder': True
+            }
+            result = self.faces_collection.insert_one(class_data)
+            return str(result.inserted_id)
+        except Exception as e:
+            print(f"Error creating class: {e}")
+            return None
+
+    def rename_class(self, old_name, new_name):
+        """Rename a class - update all related collections"""
+        try:
+            faces_result = self.faces_collection.update_many(
+                {'class_name': old_name},
+                {'$set': {'class_name': new_name}}
+            )
+            attendance_result = self.attendance_collection.update_many(
+                {'class_name': old_name},
+                {'$set': {'class_name': new_name}}
+            )
+            sessions_result = self.attendance_sessions_collection.update_many(
+                {'class_name': old_name},
+                {'$set': {'class_name': new_name}}
+            )
+            schedules_result = self.schedules_collection.update_many(
+                {'class_name': old_name},
+                {'$set': {'class_name': new_name}}
+            )
+            return {
+                'faces_updated': faces_result.modified_count,
+                'attendance_updated': attendance_result.modified_count,
+                'sessions_updated': sessions_result.modified_count,
+                'schedules_updated': schedules_result.modified_count
+            }
+        except Exception as e:
+            print(f"Error renaming class: {e}")
+            return None
     
     # Attendance operations
-    def create_attendance(self, name, class_name, user_id, attendance_type='in', attendance_time=None, allow_duplicate=False, face_image=None):
+    def create_attendance(self, name, class_name, user_id, attendance_type='in', attendance_time=None, allow_duplicate=False, face_image=None, msv=None):
         try:
             
             now = attendance_time or datetime.now()
@@ -201,15 +440,21 @@ class DatabaseService:
                 today_start = datetime(now.year, now.month, now.day)
                 today_end = today_start + timedelta(days=1)
                 
-                existing = self.attendance_collection.find_one({
-                    'name': name,
+                # Use MSV for duplicate check if available, otherwise use name
+                query = {
                     'class_name': class_name,
                     'attendance_type': attendance_type,
                     'timestamp': {
                         '$gte': today_start,
                         '$lt': today_end
                     }
-                })
+                }
+                if msv:
+                    query['msv'] = msv
+                else:
+                    query['name'] = name
+                
+                existing = self.attendance_collection.find_one(query)
                 
                 if existing:
                     return str(existing['_id'])
@@ -222,6 +467,8 @@ class DatabaseService:
                 'date': now.date(),
                 'timestamp': now
             }
+            if msv:
+                attendance_data['msv'] = msv
             if face_image:
                 attendance_data['face_image'] = face_image
             
@@ -338,14 +585,21 @@ class DatabaseService:
                 }
             }
 
-            present_records = list(self.attendance_collection.find(summary_query, {'name': 1}))
+            # Get attendance records with both msv and name fields
+            present_records = list(self.attendance_collection.find(summary_query, {'name': 1, 'msv': 1}))
             present_msvs = set()
             for record in present_records:
-                name = record.get('name')
-                if name:
-                    face = self.faces_collection.find_one({'name': name, 'class_name': class_name}, {'msv': 1})
-                    if face and face.get('msv'):
-                        present_msvs.add(face['msv'])
+                # First try to use MSV directly from attendance record
+                msv = record.get('msv')
+                if msv:
+                    present_msvs.add(msv)
+                else:
+                    # Fallback: lookup MSV from faces collection by name
+                    name = record.get('name')
+                    if name:
+                        face = self.faces_collection.find_one({'name': name, 'class_name': class_name}, {'msv': 1})
+                        if face and face.get('msv'):
+                            present_msvs.add(face['msv'])
 
             present_students = len(present_msvs & student_msvs)
             absent_students = total_students - present_students
@@ -386,11 +640,23 @@ class DatabaseService:
             print(f"Error creating attendance session: {e}")
             return None
 
-    def get_attendance_sessions_by_class(self, class_name, limit=50):
+    def get_attendance_sessions_by_class(self, class_name, limit=50, start_date=None, end_date=None):
         try:
-
+            # Build query with optional date filters
+            query = {'class_name': class_name}
+            
+            # Filter by date range on end_time (the session completion time)
+            if start_date or end_date:
+                end_time_filter = {}
+                if start_date:
+                    end_time_filter['$gte'] = start_date
+                if end_date:
+                    end_time_filter['$lte'] = end_date
+                if end_time_filter:
+                    query['end_time'] = end_time_filter
+            
             sessions = self.attendance_sessions_collection.find(
-                {'class_name': class_name}
+                query
             ).sort('end_time', -1).limit(limit)
 
             result = []
@@ -399,13 +665,14 @@ class DatabaseService:
                 end_time = record.get('end_time')
                 attendance_type = record.get('attendance_type')
 
-                student_names = self.get_class_students(class_name)
-                normalized_students = {self._normalize_name(name) for name in student_names if name}
-                total_students = len(normalized_students)
+                # Use MSV instead of name for unique identification
+                student_msvs = set(self.get_class_students_msvs(class_name))
+                total_students = len(student_msvs)
 
                 present_faces = record.get('present_faces') or []
                 if present_faces:
-                    present_normalized = {self._normalize_name(face.get('name')) for face in present_faces if face.get('name')}
+                    # Get MSVs from present_faces
+                    present_msvs = {face.get('msv') for face in present_faces if face.get('msv')}
                 else:
                     records_in_range = self.get_attendance_records_in_range(
                         class_name,
@@ -413,9 +680,9 @@ class DatabaseService:
                         start_time,
                         end_time
                     )
-                    present_normalized = {self._normalize_name(r.get('name')) for r in records_in_range if r.get('name')}
+                    present_msvs = {r.get('msv') for r in records_in_range if r.get('msv')}
 
-                present_count = len(present_normalized & normalized_students)
+                present_count = len(present_msvs & student_msvs)
                 absent_count = total_students - present_count
                 if absent_count < 0:
                     absent_count = 0
@@ -473,6 +740,14 @@ class DatabaseService:
             print(f"Error getting class students: {e}")
             return []
 
+    def get_class_students_msvs(self, class_name):
+        """Get all MSVs of students in a class"""
+        try:
+            return list(self.faces_collection.distinct('msv', {'class_name': class_name}))
+        except Exception as e:
+            print(f"Error getting class students MSVs: {e}")
+            return []
+
     def get_attendance_names_in_range(self, class_name, attendance_type, start_time, end_time):
         try:
             return list(self.attendance_collection.distinct('name', {
@@ -501,8 +776,9 @@ class DatabaseService:
             for record in records:
                 result.append({
                     'name': record.get('name'),
+                    'msv': record.get('msv'),
                     'face_image': record.get('face_image'),
-                    'timestamp': record.get('timestamp')
+                    'timestamp': record.get('timestamp').isoformat() if record.get('timestamp') else ''
                 })
             return result
         except Exception as e:
@@ -566,6 +842,32 @@ class DatabaseService:
             return result
         except Exception as e:
             print(f"Error getting schedules: {e}")
+            return []
+
+    def get_all_schedules(self):
+        """Get all schedules across all classes"""
+        try:
+            schedules = self.schedules_collection.find().sort('created_at', -1)
+            result = []
+            for s in schedules:
+                result.append({
+                    'id': str(s['_id']),
+                    'class_name': s.get('class_name'),
+                    'attendance_type': s.get('attendance_type', 'in'),
+                    'rtsp_url': s.get('rtsp_url', '0'),
+                    'start_hour': s.get('start_hour', 0),
+                    'start_minute': s.get('start_minute', 0),
+                    'duration_minutes': s.get('duration_minutes', 15),
+                    'total_days': s.get('total_days', 1),
+                    'days_completed': s.get('days_completed', 0),
+                    'active': s.get('active', False),
+                    'status': 'active' if s.get('active') else 'paused',
+                    'created_at': s.get('created_at').isoformat() if s.get('created_at') else None,
+                    'last_run_date': str(s.get('last_run_date')) if s.get('last_run_date') else None
+                })
+            return result
+        except Exception as e:
+            print(f"Error getting all schedules: {e}")
             return []
 
     def get_all_active_schedules(self):

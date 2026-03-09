@@ -81,12 +81,15 @@ class RTSPService:
             present_faces_map = {}
             for face_data in self.recognized_faces_dict.values():
                 name = face_data.get('name')
+                msv = face_data.get('msv')
                 class_name_for_face = face_data.get('class_name')
                 if name and (class_name_for_face == self.class_name or class_name_for_face is None):
-                    normalized = db_service._normalize_name(name)
-                    if normalized and normalized not in present_faces_map:
-                        present_faces_map[normalized] = {
+                    # Use MSV as key if available, otherwise use normalized name
+                    key = msv if msv else db_service._normalize_name(name)
+                    if key and key not in present_faces_map:
+                        present_faces_map[key] = {
                             'name': name,
+                            'msv': msv,
                             'face_image': face_data.get('face_image')
                         }
                     db_service.create_attendance(
@@ -96,7 +99,8 @@ class RTSPService:
                         self.attendance_type,
                         attendance_time=end_time,
                         allow_duplicate=True,
-                        face_image=face_data.get('face_image')
+                        face_image=face_data.get('face_image'),
+                        msv=msv
                     )
             present_faces = list(present_faces_map.values())
             summary = db_service.get_attendance_summary_in_range(
@@ -240,13 +244,14 @@ class RTSPService:
                                 
 
                                 attendance_id = db_service.create_attendance(
-                                    name, 
-                                    self.class_name, 
+                                    name,
+                                    self.class_name,
                                     self.user_id,
                                     self.attendance_type,
                                     attendance_time=datetime.now(),
                                     allow_duplicate=True,
-                                    face_image=face_image_base64
+                                    face_image=face_image_base64,
+                                    msv=msv
                                 )
                                 
                                 if attendance_id: 

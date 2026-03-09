@@ -37,6 +37,11 @@ if (loginForm) {
             const data = await response.json();
             
             if (data.success) {
+                // Store user info in localStorage
+                if (data.user) {
+                    localStorage.setItem('userRole', data.user.role || 'user');
+                    localStorage.setItem('username', data.user.username || '');
+                }
                 showAlert('Đăng nhập thành công! Đang chuyển hướng...', 'success');
                 setTimeout(() => {
                     window.location.href = '/dashboard';
