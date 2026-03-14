@@ -83,6 +83,27 @@
                 </div>
             </div>
 
+            <!-- ====== CAPTCHA WIDGET ====== -->
+            <div class="form-group">
+                <label>
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        🔐 Mã xác nhận CAPTCHA
+                    </span>
+                </label>
+                <div class="captcha-container">
+                    <div class="captcha-image-wrapper">
+                        <img id="captchaImage" src="" alt="CAPTCHA" class="captcha-image" onclick="refreshCaptcha()">
+                        <button type="button" onclick="refreshCaptcha()" class="captcha-refresh-btn" title="Tải lại CAPTCHA mới">
+                            🔄
+                        </button>
+                    </div>
+                    <input type="text" id="captchaInput" class="form-control captcha-input"
+                           placeholder="Nhập mã ở trên" required autocomplete="off"
+                           maxlength="5" style="text-transform: uppercase; letter-spacing: 3px; font-weight: 700; font-size: 18px; text-align: center;">
+                    <input type="hidden" id="captchaId" value="">
+                </div>
+            </div>
+
             <div style="margin-bottom: 25px;">
                 <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 13px; color: var(--gray); line-height: 1.5;">
                     <input type="checkbox" required style="accent-color: var(--primary); width: 18px; height: 18px; margin-top: 2px;">

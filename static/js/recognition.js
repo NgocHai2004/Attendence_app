@@ -3,6 +3,7 @@ let isStreamRunning = false;
 let lastSummaryUpdate = 0;
 let browserCameraStream = null;
 let captureInterval = null;
+let telegramEnabled = false;
 
 function logout() {
     fetch('/api/logout')
@@ -355,6 +356,51 @@ function refreshAttendanceSummary() {
     loadAttendanceSummary(attendance_type);
 }
 
+// Telegram toggle function
+async function toggleTelegram(checked) {
+    telegramEnabled = checked;
+    try {
+        const response = await fetch('/api/telegram/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ send_on_stop: checked })
+        });
+        const data = await response.json();
+        if (data.success) {
+            showStatus(checked ? '📱 Telegram: Sẽ gửi thông báo khi dừng điểm danh' : '📱 Telegram: Đã tắt thông báo', 'info');
+        }
+    } catch (error) {
+        console.error('Telegram toggle error:', error);
+    }
+}
+
+// Load initial Telegram config
+async function loadTelegramConfig() {
+    try {
+        const response = await fetch('/api/telegram/config');
+        const data = await response.json();
+        if (data.success && data.config) {
+            const toggle = document.getElementById('telegramToggle');
+            if (toggle) {
+                toggle.checked = data.config.send_on_stop || false;
+                telegramEnabled = toggle.checked;
+                // If not configured, disable the toggle
+                if (!data.config.configured) {
+                    toggle.disabled = true;
+                    const telegramToggleDiv = toggle.closest('.telegram-toggle');
+                    if (telegramToggleDiv) {
+                        telegramToggleDiv.style.opacity = '0.6';
+                        telegramToggleDiv.querySelector('div > div:last-child').textContent =
+                            'Chưa cấu hình Telegram. Vào Dashboard → Cài đặt Telegram để cấu hình.';
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading telegram config:', error);
+    }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const class_name = urlParams.get('class_name');
@@ -365,6 +411,9 @@ window.addEventListener('DOMContentLoaded', () => {
         showStatus('Thiếu thông tin lớp học. Đang quay lại Dashboard...', 'error');
         setTimeout(() => window.location.href = '/dashboard', 2000);
     }
+
+    // Load Telegram configuration
+    loadTelegramConfig();
 
     document.querySelectorAll('input[name="attendanceMode"]').forEach(input => {
         input.addEventListener('change', () => {

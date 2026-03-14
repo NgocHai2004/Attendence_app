@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 from services.face_recognition_service import face_service
 from services.database_service import db_service
+from services.telegram_service import telegram_service
 
 class RTSPService:
     """Service for handling RTSP stream and real-time face recognition"""
@@ -120,6 +121,20 @@ class RTSPService:
                 summary.get('absent', 0),
                 present_faces=present_faces
             )
+
+            # Send Telegram notification if enabled
+            if telegram_service.send_on_stop and telegram_service.is_configured():
+                telegram_service.send_attendance_summary_async(
+                    class_name=self.class_name,
+                    attendance_type=self.attendance_type,
+                    present=summary.get('present', 0),
+                    absent=summary.get('absent', 0),
+                    total=summary.get('total', 0),
+                    start_time=self.session_start_time,
+                    end_time=end_time,
+                    present_faces=present_faces,
+                    is_scheduled=False
+                )
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=2)

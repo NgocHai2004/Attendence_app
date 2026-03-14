@@ -56,19 +56,47 @@
                         👁️
                     </button>
                 </div>
-            </div>
-
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: var(--gray);">
-                    <input type="checkbox" style="accent-color: var(--primary); width: 16px; height: 16px;">
-                    Ghi nhớ đăng nhập
-                </label>
-                <a href="#" style="color: var(--primary); font-size: 14px; text-decoration: none; font-weight: 600;">Quên mật khẩu?</a>
-            </div>
-
-            <button type="submit" class="btn btn-primary">
-                🚀 Đăng nhập
-            </button>
+                </div>
+    
+                <!-- ====== CAPTCHA WIDGET ====== -->
+                <!--
+                    GIẢI THÍCH:
+                    - captchaImage: hiển thị hình ảnh CAPTCHA từ server
+                    - captchaInput: ô nhập mã CAPTCHA
+                    - refreshCaptchaBtn: nút tải lại CAPTCHA mới
+                    - captchaId: input ẩn lưu captcha_id để gửi kèm form
+                -->
+                <div class="form-group">
+                    <label>
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                            🔐 Mã xác nhận CAPTCHA
+                        </span>
+                    </label>
+                    <div class="captcha-container">
+                        <div class="captcha-image-wrapper">
+                            <img id="captchaImage" src="" alt="CAPTCHA" class="captcha-image" onclick="refreshCaptcha()">
+                            <button type="button" onclick="refreshCaptcha()" class="captcha-refresh-btn" title="Tải lại CAPTCHA mới">
+                                🔄
+                            </button>
+                        </div>
+                        <input type="text" id="captchaInput" class="form-control captcha-input"
+                               placeholder="Nhập mã ở trên" required autocomplete="off"
+                               maxlength="5" style="text-transform: uppercase; letter-spacing: 3px; font-weight: 700; font-size: 18px; text-align: center;">
+                        <input type="hidden" id="captchaId" value="">
+                    </div>
+                </div>
+    
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: var(--gray);">
+                        <input type="checkbox" style="accent-color: var(--primary); width: 16px; height: 16px;">
+                        Ghi nhớ đăng nhập
+                    </label>
+                    <a href="#" style="color: var(--primary); font-size: 14px; text-decoration: none; font-weight: 600;">Quên mật khẩu?</a>
+                </div>
+    
+                <button type="submit" class="btn btn-primary">
+                    🚀 Đăng nhập
+                </button>
         </form>
 
         <div class="divider"></div>

@@ -796,7 +796,7 @@ class DatabaseService:
             return 0
 
     # Schedule operations
-    def create_schedule(self, class_name, attendance_type, rtsp_url, start_hour, start_minute, duration_minutes, total_days, user_id):
+    def create_schedule(self, class_name, attendance_type, rtsp_url, start_hour, start_minute, duration_minutes, user_id, send_telegram=False, end_hour=0, end_minute=0, selected_dates=None):
         """Create a new attendance schedule"""
         try:
             schedule_data = {
@@ -805,10 +805,13 @@ class DatabaseService:
                 'rtsp_url': rtsp_url,
                 'start_hour': start_hour,
                 'start_minute': start_minute,
+                'end_hour': end_hour,
+                'end_minute': end_minute,
                 'duration_minutes': duration_minutes,
-                'total_days': total_days,
-                'days_completed': 0,
+                'selected_dates': selected_dates or [],
+                'completed_dates': [],
                 'active': True,
+                'send_telegram': send_telegram,
                 'user_id': ObjectId(user_id) if isinstance(user_id, str) else user_id,
                 'created_at': datetime.utcnow(),
                 'last_run_date': None
@@ -832,10 +835,13 @@ class DatabaseService:
                     'rtsp_url': s.get('rtsp_url', '0'),
                     'start_hour': s.get('start_hour', 0),
                     'start_minute': s.get('start_minute', 0),
+                    'end_hour': s.get('end_hour', 0),
+                    'end_minute': s.get('end_minute', 0),
                     'duration_minutes': s.get('duration_minutes', 15),
-                    'total_days': s.get('total_days', 1),
-                    'days_completed': s.get('days_completed', 0),
+                    'selected_dates': s.get('selected_dates', []),
+                    'completed_dates': s.get('completed_dates', []),
                     'active': s.get('active', False),
+                    'send_telegram': s.get('send_telegram', False),
                     'created_at': s.get('created_at').isoformat() if s.get('created_at') else None,
                     'last_run_date': str(s.get('last_run_date')) if s.get('last_run_date') else None
                 })
@@ -857,11 +863,13 @@ class DatabaseService:
                     'rtsp_url': s.get('rtsp_url', '0'),
                     'start_hour': s.get('start_hour', 0),
                     'start_minute': s.get('start_minute', 0),
+                    'end_hour': s.get('end_hour', 0),
+                    'end_minute': s.get('end_minute', 0),
                     'duration_minutes': s.get('duration_minutes', 15),
-                    'total_days': s.get('total_days', 1),
-                    'days_completed': s.get('days_completed', 0),
+                    'selected_dates': s.get('selected_dates', []),
+                    'completed_dates': s.get('completed_dates', []),
                     'active': s.get('active', False),
-                    'status': 'active' if s.get('active') else 'paused',
+                    'send_telegram': s.get('send_telegram', False),
                     'created_at': s.get('created_at').isoformat() if s.get('created_at') else None,
                     'last_run_date': str(s.get('last_run_date')) if s.get('last_run_date') else None
                 })
@@ -883,9 +891,12 @@ class DatabaseService:
                     'rtsp_url': s.get('rtsp_url', '0'),
                     'start_hour': s.get('start_hour', 0),
                     'start_minute': s.get('start_minute', 0),
+                    'end_hour': s.get('end_hour', 0),
+                    'end_minute': s.get('end_minute', 0),
                     'duration_minutes': s.get('duration_minutes', 15),
-                    'total_days': s.get('total_days', 1),
-                    'days_completed': s.get('days_completed', 0),
+                    'selected_dates': s.get('selected_dates', []),
+                    'completed_dates': s.get('completed_dates', []),
+                    'send_telegram': s.get('send_telegram', False),
                     'user_id': str(s.get('user_id')),
                     'last_run_date': s.get('last_run_date')
                 })
@@ -897,18 +908,26 @@ class DatabaseService:
     def update_schedule_after_run(self, schedule_id):
         """Update schedule after a successful run"""
         try:
-            today = datetime.now().date()
+            today_str = datetime.now().strftime('%Y-%m-%d')
             schedule = self.schedules_collection.find_one({'_id': ObjectId(schedule_id)})
             if not schedule:
                 return False
-            new_days_completed = schedule.get('days_completed', 0) + 1
-            total_days = schedule.get('total_days', 1)
+
+            # Add today to completed_dates
+            completed_dates = schedule.get('completed_dates', [])
+            if today_str not in completed_dates:
+                completed_dates.append(today_str)
+
+            selected_dates = schedule.get('selected_dates', [])
             update_data = {
-                'days_completed': new_days_completed,
-                'last_run_date': datetime(today.year, today.month, today.day)
+                'completed_dates': completed_dates,
+                'last_run_date': datetime.now()
             }
-            if new_days_completed >= total_days:
+
+            # Deactivate if all selected dates are completed
+            if len(completed_dates) >= len(selected_dates) and len(selected_dates) > 0:
                 update_data['active'] = False
+
             self.schedules_collection.update_one(
                 {'_id': ObjectId(schedule_id)},
                 {'$set': update_data}

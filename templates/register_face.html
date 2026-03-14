@@ -288,6 +288,62 @@
             align-items: center;
             gap: 8px;
         }
+
+        /* Back button gray background */
+        .btn-back-gray {
+            padding: 10px 24px;
+            background: rgba(100, 116, 139, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            color: white;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(8px);
+        }
+
+        .btn-back-gray:hover {
+            background: rgba(100, 116, 139, 0.85);
+            border-color: rgba(148, 163, 184, 0.7);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+        }
+
+        /* Admin info light green background */
+        .admin-info-gray {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 20px 8px 12px;
+            background: rgba(74, 222, 128, 0.25);
+            border: 1px solid rgba(74, 222, 128, 0.4);
+            border-radius: 50px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: default;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(8px);
+        }
+
+        .admin-info-gray:hover {
+            background: rgba(74, 222, 128, 0.4);
+            border-color: rgba(74, 222, 128, 0.6);
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.25);
+        }
+
+        .admin-info-gray .admin-avatar {
+            width: 32px;
+            height: 32px;
+            background: rgba(74, 222, 128, 0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
     </style>
 </head>
 
@@ -296,18 +352,18 @@
         <!-- Header -->
         <div class="dashboard-header">
             <div style="display: flex; align-items: center; gap: 15px;">
-                <button class="btn btn-outline" onclick="window.location.href='/dashboard'"
-                    style="padding: 10px 20px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: white;">
-                    ← Quay lại
+                <button class="btn-back-gray" onclick="window.location.href='/dashboard'">
+                    ← QUAY LẠI
                 </button>
             </div>
             <h1 style="display: flex; align-items: center; gap: 12px;">
                 <span style="font-size: 28px;">📸</span> Đăng ký khuôn mặt
             </h1>
-            <div class="user-info">
-                <span id="username" style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 18px;">👤</span> {{ username }}
-                </span>
+            <div class="user-info" style="gap: 12px;">
+                <div class="admin-info-gray">
+                    <span class="admin-avatar">👤</span>
+                    <span id="username">{{ username }}</span>
+                </div>
                 <button class="btn btn-danger" onclick="logout()" style="padding: 10px 20px;">
                     🚪 Đăng xuất
                 </button>

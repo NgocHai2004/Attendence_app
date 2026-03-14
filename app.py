@@ -16,7 +16,7 @@ import json
 from typing import Optional, List
 from pydantic import BaseModel
 
-from services import db_service, face_service, rtsp_service, scheduler
+from services import db_service, face_service, rtsp_service, scheduler, telegram_service, captcha_service
 
 app = FastAPI(title="Face Recognition Attendance System")
 
@@ -50,10 +50,14 @@ class RegisterUserRequest(BaseModel):
     username: str
     email: str
     password: str
+    captcha_id: str = ''
+    captcha_text: str = ''
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+    captcha_id: str = ''
+    captcha_text: str = ''
 
 class RegisterFaceCameraRequest(BaseModel):
     name: str
@@ -100,8 +104,11 @@ class CreateScheduleRequest(BaseModel):
     rtsp_url: str = '0'
     start_hour: int
     start_minute: int = 0
+    end_hour: int = 0
+    end_minute: int = 0
     duration_minutes: int = 15
-    total_days: int = 1
+    selected_dates: List[str] = []
+    send_telegram: bool = False
 
 # Pydantic models for user management
 class CreateUserRequest(BaseModel):
@@ -118,6 +125,14 @@ class UpdateUserRequest(BaseModel):
 
 class UpdateUserPasswordRequest(BaseModel):
     password: str
+
+# Pydantic models for Telegram
+class TelegramConfigRequest(BaseModel):
+    bot_token: str
+    chat_id: str
+
+class TelegramToggleRequest(BaseModel):
+    send_on_stop: bool
 
 # Helper function to get session
 def get_session(request: Request):
@@ -224,11 +239,46 @@ async def user_management_page(request: Request):
         'role': user.get('role', 'user')
     })
 
+# ============================================================
+# CAPTCHA API Routes
+# ============================================================
+
+@app.get('/api/captcha/generate')
+async def api_generate_captcha():
+    """
+    Tạo CAPTCHA mới.
+    
+    GIẢI THÍCH:
+    - Client gọi API này để lấy hình ảnh CAPTCHA
+    - Server trả về captcha_id (để xác thực sau) và captcha_image (base64)
+    - Mã CAPTCHA thật KHÔNG được gửi cho client
+    """
+    try:
+        result = captcha_service.create_captcha()
+        return {
+            'success': True,
+            'captcha_id': result['captcha_id'],
+            'captcha_image': result['captcha_image']
+        }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+
 # API Routes
 @app.post('/api/register')
 async def api_register(data: RegisterUserRequest):
     """Register a new user"""
     try:
+        # ====== XÁC THỰC CAPTCHA TRƯỚC ======
+        # Kiểm tra CAPTCHA trước khi xử lý đăng ký
+        captcha_result = captcha_service.verify_captcha(data.captcha_id, data.captcha_text)
+        if not captcha_result['valid']:
+            return JSONResponse({
+                'success': False,
+                'message': captcha_result['message'],
+                'captcha_error': True  # Flag để frontend biết cần refresh CAPTCHA
+            }, status_code=400)
+        
         username = data.username
         email = data.email
         password = data.password
@@ -258,6 +308,16 @@ async def api_register(data: RegisterUserRequest):
 async def api_login(request: Request, data: LoginRequest):
     """Login user"""
     try:
+        # ====== XÁC THỰC CAPTCHA TRƯỚC ======
+        # Kiểm tra CAPTCHA trước khi xử lý đăng nhập
+        captcha_result = captcha_service.verify_captcha(data.captcha_id, data.captcha_text)
+        if not captcha_result['valid']:
+            return JSONResponse({
+                'success': False,
+                'message': captcha_result['message'],
+                'captcha_error': True  # Flag để frontend biết cần refresh CAPTCHA
+            }, status_code=400)
+        
         email = data.email
         password = data.password
         
@@ -1223,6 +1283,20 @@ async def api_browser_session_stop(request: Request, data: BrowserSessionStopReq
                 summary.get('absent', 0), present_faces=present_faces
             )
 
+            # Send Telegram notification if enabled
+            if telegram_service.send_on_stop and telegram_service.is_configured():
+                telegram_service.send_attendance_summary_async(
+                    class_name=class_name,
+                    attendance_type=attendance_type,
+                    present=summary.get('present', 0),
+                    absent=summary.get('absent', 0),
+                    total=summary.get('total', 0),
+                    start_time=browser_session_start,
+                    end_time=end_time,
+                    present_faces=present_faces,
+                    is_scheduled=False
+                )
+
         browser_recognized_faces = {}
         browser_session_start = None
         return {'success': True}
@@ -1329,19 +1403,28 @@ async def api_create_schedule(request: Request, data: CreateScheduleRequest):
         rtsp_url = data.rtsp_url
         start_hour = data.start_hour
         start_minute = data.start_minute
+        end_hour = data.end_hour
+        end_minute = data.end_minute
         duration_minutes = data.duration_minutes
-        total_days = data.total_days
+        selected_dates = data.selected_dates
+        send_telegram = data.send_telegram
 
         if not class_name:
             return JSONResponse({'success': False, 'message': 'Class name is required'}, status_code=400)
         if start_hour is None:
             return JSONResponse({'success': False, 'message': 'Start hour is required'}, status_code=400)
+        if not selected_dates:
+            return JSONResponse({'success': False, 'message': 'Please select at least one date'}, status_code=400)
 
         schedule_id = db_service.create_schedule(
             class_name, attendance_type, rtsp_url,
             int(start_hour), int(start_minute),
-            int(duration_minutes), int(total_days),
-            request.session['user_id']
+            int(duration_minutes),
+            request.session['user_id'],
+            send_telegram=send_telegram,
+            end_hour=int(end_hour),
+            end_minute=int(end_minute),
+            selected_dates=selected_dates
         )
 
         if schedule_id:
@@ -1610,6 +1693,62 @@ async def api_get_current_user(request: Request):
                 'is_active': user.get('is_active', True)
             }
         }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+# ==================== TELEGRAM APIs ====================
+
+@app.get('/api/telegram/config')
+async def api_get_telegram_config(request: Request):
+    """Get current Telegram configuration"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+        return {'success': True, 'config': telegram_service.get_config()}
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/telegram/config')
+async def api_set_telegram_config(request: Request, data: TelegramConfigRequest):
+    """Update Telegram bot configuration"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        enabled = telegram_service.configure(data.bot_token, data.chat_id)
+        return {
+            'success': True,
+            'enabled': enabled,
+            'message': 'Cấu hình Telegram đã được cập nhật' if enabled else 'Telegram đã bị tắt (thiếu token hoặc chat_id)'
+        }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/telegram/toggle')
+async def api_toggle_telegram(request: Request, data: TelegramToggleRequest):
+    """Toggle Telegram notification for current session"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        telegram_service.set_send_on_stop(data.send_on_stop)
+        return {
+            'success': True,
+            'send_on_stop': telegram_service.send_on_stop,
+            'message': 'Đã bật gửi Telegram' if data.send_on_stop else 'Đã tắt gửi Telegram'
+        }
+    except Exception as e:
+        return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
+
+@app.post('/api/telegram/test')
+async def api_test_telegram(request: Request):
+    """Test Telegram bot connection"""
+    try:
+        if 'user_id' not in request.session:
+            return JSONResponse({'success': False, 'message': 'Not authenticated'}, status_code=401)
+
+        result = telegram_service.test_connection()
+        return result
     except Exception as e:
         return JSONResponse({'success': False, 'message': str(e)}, status_code=500)
 
